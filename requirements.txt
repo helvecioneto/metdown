@@ -1,0 +1,13 @@
+argparse
+glob2
+pathlib2
+numpy
+pandas
+geopandas
+xarray
+shapely
+metpy
+cartopy
+requests
+regex
+tqdm
