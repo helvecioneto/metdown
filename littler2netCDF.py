@@ -51,6 +51,8 @@ def df2xarray(df, var, ovar, nodata=99999.00000, res = 9000, radius = 50000,
         print('- Processing Time:', time_)
         ds = xr.Dataset({ovar: (['latitude', 'longitude'], img)},
                         coords={'latitude': lats, 'longitude': lons, 'time': time_})
+        ds.longitude.attrs['units'] = 'degrees_east'
+        ds.latitude.attrs['units'] = 'degrees_north'
         # Add Method used in variable
         ds[ovar].attrs['method'] = interp_type
         ds[ovar].attrs['radius'] = str(radius / 1000) + ' km'
@@ -60,7 +62,7 @@ def df2xarray(df, var, ovar, nodata=99999.00000, res = 9000, radius = 50000,
         ds[ovar].attrs['kappa_star'] = kappa_star
         ds[ovar].attrs['description'] = 'Interpolated data from surface observations using MetPy'
         ds.attrs['title'] = 'Little R Data interpolated'
-        ds.attrs['author'] = 'Helvecio Neto (2024) - helecioblneto@gmail.com/github.com/helecioneto'
+        ds.attrs['author'] = 'Helvecio Neto (2024) - helecioblneto@gmail.com/github.com/helecioneto'  
         datasets.append(ds)
     if len(datasets) > 0:
         base_ds = datasets[0]
@@ -124,7 +126,7 @@ if __name__ == '__main__':
         if dataset is not None:
             output_file = args.output + '/' + file_name
             # Save as netCDF format classic
-            dataset.to_netcdf(output_file, format='NETCDF3_CLASSIC')
+            dataset.to_netcdf(output_file)
             print('File saved:', output_file)
         else:
             print('No data to save')
