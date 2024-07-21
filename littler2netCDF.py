@@ -105,6 +105,9 @@ if __name__ == '__main__':
     files = glob.glob(args.input + '/*.csv')
     # Create the output directory if not exists
     pathlib.Path(args.output).mkdir(parents=True, exist_ok=True)
+    # Check if oar is none get name of ar
+    if args.ovar is None:
+        args.ovar = args.variable
     for file in files:
         print('Processing file:', file)
         df = pd.read_csv(file)
