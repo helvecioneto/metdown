@@ -13,7 +13,7 @@ import cartopy.crs as ccrs
 def remap_to_base(ds, base_ds):
     return ds.interp_like(base_ds)
 
-def df2xarray(df, var, nodata=99999.00000, res = 9000, radius = 50000,
+def df2xarray(df, var, ovar, nodata=99999.00000, res = 9000, radius = 50000,
             interp_type='cressman', minimum_neighbors=1, gamma=0.25, kappa_star=5.052,
             boundary_coords=None):
     print('Processing variable:', var)
@@ -49,16 +49,16 @@ def df2xarray(df, var, nodata=99999.00000, res = 9000, radius = 50000,
         # Create the xarray dataset
         time_ = pd.to_datetime(date, format='%Y%m%d%H%M%S')[0]
         print('- Processing Time:', time_)
-        ds = xr.Dataset({var: (['latitude', 'longitude'], img)},
+        ds = xr.Dataset({ovar: (['latitude', 'longitude'], img)},
                         coords={'latitude': lats, 'longitude': lons, 'time': time_})
         # Add Method used in variable
-        ds[var].attrs['method'] = interp_type
-        ds[var].attrs['radius'] = str(radius / 1000) + ' km'
-        ds[var].attrs['resolution'] = str(res / 1000) + ' km'
-        ds[var].attrs['minimum_neighbors'] = minimum_neighbors
-        ds[var].attrs['gamma'] = gamma
-        ds[var].attrs['kappa_star'] = kappa_star
-        ds[var].attrs['description'] = 'Interpolated data from surface observations using MetPy'
+        ds[ovar].attrs['method'] = interp_type
+        ds[ovar].attrs['radius'] = str(radius / 1000) + ' km'
+        ds[ovar].attrs['resolution'] = str(res / 1000) + ' km'
+        ds[ovar].attrs['minimum_neighbors'] = minimum_neighbors
+        ds[ovar].attrs['gamma'] = gamma
+        ds[ovar].attrs['kappa_star'] = kappa_star
+        ds[ovar].attrs['description'] = 'Interpolated data from surface observations using MetPy'
         ds.attrs['title'] = 'Little R Data interpolated'
         ds.attrs['author'] = 'Helvecio Neto (2024) - helecioblneto@gmail.com/github.com/helecioneto'
         datasets.append(ds)
@@ -74,7 +74,7 @@ def df2xarray(df, var, nodata=99999.00000, res = 9000, radius = 50000,
     
 if __name__ == '__main__':
     epilog = f"Exemple:\n\tpython littler2netCDF.py -i './output'" \
-                " -o './output_nc' -var 'Temperature (K)'"
+                " -o './output_nc' -var 'Temperature (K)' -ovar 'T2'"
     parser = argparse.ArgumentParser(description='Convert Little R Data to NetCDF',
                                     formatter_class=argparse.RawTextHelpFormatter,
                                     epilog=epilog)
@@ -84,6 +84,8 @@ if __name__ == '__main__':
                         help='Output Directory', default='./output_nc')
     parser.add_argument('-var', '--variable', dest='variable', type=str,
                         help='Variable to convert', default='Temperature')
+    parser.add_argument('-ovar', '--outputvar', dest='ovar', type=str,
+                        help='Output variable name', default='T2')
     parser.add_argument('-nodata', '--nodata', dest='nodata', type=float,
                         help='No data value', default=99999.00000)
     parser.add_argument('-res', '--resolution', dest='res', type=int,
@@ -106,11 +108,20 @@ if __name__ == '__main__':
     for file in files:
         print('Processing file:', file)
         df = pd.read_csv(file)
-        dataset = df2xarray(df, args.variable, args.nodata, args.res, args.radius,
+        # Transform column Data to datetime
+        df['Date'] = pd.to_datetime(df['Date'], format='%Y%m%d%H%M%S', errors='coerce')
+        time_file = file.split('/')[-1].split('.')[0].split(':')[-1]
+        timefile = pd.to_datetime(time_file, format='%Y%m%d%H', errors='coerce')
+        df = df.loc[df['Date'] == timefile]
+        file_name = file.split('/')[-1].replace('.csv', '.nc')
+        ####### Apply filters here ########
+        # df = df.loc[df[filter_var]]
+        dataset = df2xarray(df, args.variable, args.ovar, args.nodata, args.res, args.radius,
                             args.interp, args.min_neigh, args.gamma, args.kappa)
         if dataset is not None:
-            output_file = args.output + '/' + args.variable + '.nc'
-            dataset.to_netcdf(output_file)
+            output_file = args.output + '/' + file_name
+            # Save as netCDF format classic
+            dataset.to_netcdf(output_file, format='NETCDF3_CLASSIC')
             print('File saved:', output_file)
         else:
             print('No data to save')
