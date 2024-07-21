@@ -8,14 +8,27 @@ import xarray as xr
 from shapely.geometry import Point
 from metpy.interpolate import interpolate_to_grid
 import cartopy.crs as ccrs
+from scipy.interpolate import griddata
+from scipy.ndimage import gaussian_filter
 import warnings
 warnings.filterwarnings("ignore")
 
 def remap_to_base(ds, base_ds):
     return ds.interp_like(base_ds)
 
-def df2xarray(df, var, ovar, nodata=99999.00000, res = 9000, radius = 50000,
-            interp_type='cressman', minimum_neighbors=1, gamma=0.25, kappa_star=5.052,
+def fullgrid(matrix):
+    x, y = np.meshgrid(np.arange(matrix.shape[1]), np.arange(matrix.shape[0]))
+    points = np.array((x[~np.isnan(matrix)], y[~np.isnan(matrix)])).T
+    values = matrix[~np.isnan(matrix)]
+    filled_matrix = griddata(points, values, (x, y), method='cubic')
+    mask = np.isnan(filled_matrix)
+    filled_matrix[mask] = griddata(points, values, (x, y), method='nearest')[mask]
+    return filled_matrix
+
+def df2xarray(df, var, ovar, full_grid=True, g_filter=True, g_sigma=20, 
+            nodata=99999.00000, res = 10000, radius = 100000,
+            interp_type='cressman', minimum_neighbors=1,
+            gamma=0.25, kappa_star=5.052,
             boundary_coords=None):
     print('Processing variable:', var)
     # select the columns of interest
@@ -40,6 +53,10 @@ def df2xarray(df, var, ovar, nodata=99999.00000, res = 9000, radius = 50000,
                                         gamma=gamma, kappa_star=kappa_star, 
                                         search_radius=radius, hres=res, 
                                         boundary_coords=boundary_coords)
+        if full_grid:
+            img = fullgrid(img)
+        if g_filter:
+            img = gaussian_filter(img, sigma=g_sigma)
         min_x, max_x, min_y, max_y = gx.min(), gx.max(), gy.min(), gy.max()
         points = [Point(min_x, min_y), Point(max_x, max_y)]
         geo_pts = gpd.GeoSeries(points, crs="EPSG:3857")
@@ -94,7 +111,7 @@ if __name__ == '__main__':
     parser.add_argument('-res', '--resolution', dest='res', type=int,
                         help='Resolution in meters', default=10000)
     parser.add_argument('-radius', '--radius', dest='radius', type=int,
-                        help='Search radius in meters', default=300000)
+                        help='Search radius in meters', default=100000)
     parser.add_argument('-interp', '--interp', dest='interp', type=str,
                         help='Interpolation method', default='cressman')
     parser.add_argument('-min_neigh', '--min_neigh', dest='min_neigh', type=int,
@@ -102,7 +119,14 @@ if __name__ == '__main__':
     parser.add_argument('-gamma', '--gamma', dest='gamma', type=float,
                         help='Gamma value', default=0.25)
     parser.add_argument('-kappa', '--kappa', dest='kappa', type=float,
-                        help='Kappa star value', default=5.052)    
+                        help='Kappa star value', default=5.052)
+    # add parameter full_grid
+    parser.add_argument('-fg', '--full_grid', dest='full_grid', type=bool,
+                        help='Full grid interpolation', default=True)
+    parser.add_argument('-gf', '--gaussian_filter', dest='gaussian_filter', type=bool,
+                        help='Apply gaussian filter', default=True)
+    parser.add_argument('-gs', '--gaussian_sigma', dest='gaussian_sigma', type=int,
+                        help='Gaussian sigma value', default=20)
     args = parser.parse_args()
     # Read all files in the input directory
     files = glob.glob(args.input + '/*.csv')
@@ -120,9 +144,12 @@ if __name__ == '__main__':
         timefile = pd.to_datetime(time_file, format='%Y%m%d%H', errors='coerce')
         df = df.loc[df['Date'] == timefile]
         file_name = file.split('/')[-1].replace('.csv', '.nc')
-        ####### Apply filters here ########
+        ####### Apply other filters here ########
         # df = df.loc[df[filter_var]]
-        dataset = df2xarray(df, args.variable, args.ovar, args.nodata, args.res, args.radius,
+        dataset = df2xarray(df, args.variable, args.ovar, 
+                            args.full_grid, args.gaussian_filter, 
+                            args.gaussian_sigma,
+                            args.nodata, args.res, args.radius,
                             args.interp, args.min_neigh, args.gamma, args.kappa)
         if dataset is not None:
             output_file = args.output + '/' + file_name

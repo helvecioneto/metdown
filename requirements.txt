@@ -11,3 +11,4 @@ cartopy
 requests
 regex
 tqdm
+scipy
