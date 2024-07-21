@@ -8,7 +8,8 @@ import xarray as xr
 from shapely.geometry import Point
 from metpy.interpolate import interpolate_to_grid
 import cartopy.crs as ccrs
-
+import warnings
+warnings.filterwarnings("ignore")
 
 def remap_to_base(ds, base_ds):
     return ds.interp_like(base_ds)
