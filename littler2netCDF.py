@@ -105,7 +105,7 @@ if __name__ == '__main__':
     parser.add_argument('-var', '--variable', dest='variable', type=str,
                         help='Variable to convert', default='Temperature')
     parser.add_argument('-ovar', '--outputvar', dest='ovar', type=str,
-                        help='Output variable name', default='T2')
+                        help='Output variable name', default=None)
     parser.add_argument('-nodata', '--nodata', dest='nodata', type=float,
                         help='No data value', default=99999.00000)
     parser.add_argument('-res', '--resolution', dest='res', type=int,
