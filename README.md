@@ -1,7 +1,3 @@
-# Extreme Event Monitoring and Forecasting Project
-
-This project provides two main scripts: `download_litte_r.py` and `littler2netCDF.py`.
-
 ## Installation
 
 To install the necessary libraries, first ensure you have Python installed in your environment. Then, create a virtual environment (optional) and install the dependencies using the provided `requirements.txt`.
