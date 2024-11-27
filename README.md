@@ -7,12 +7,14 @@ To install the necessary libraries, first ensure you have Python installed in yo
    ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows use: venv\Scripts\activate
+   ```
+
 
 2. **Install the dependencies:**
 
    ```bash
    pip install -r requirements.txt
-
+   ```
 
 
 ## Scripts
@@ -25,6 +27,7 @@ Usage:
 
    ```bash
     python download_litte_r.py -t '2024-07-19 12:00:00' -o ./output -lat_min -10 -lat_max 10 -lon_min -70 -lon_max -45
+   ```
 
 -t : Date and time for downloading data in the format 'YYYY-MM-DD HH:MM:SS'.
 -o : Directory where the downloaded files will be stored.
@@ -39,6 +42,7 @@ Usage
 
    ```bash
    python littler2netCDF.py -i './output' -o './output_nc' -var 'Temperature (K)'
+   ```
 
 -i : Input directory where the downloaded files are located.
 -o : Output directory where the converted NetCDF files will be stored.
@@ -51,8 +55,9 @@ Navigate to the directory containing the download_litte_r.py script.
 
 Execute the script with the desired parameters:
 
-    ```bash
+   ```bash
    python download_litte_r.py -t '2024-07-19 12:00:00' -o ./output -lat_min -10 -lat_max 10 -lon_min -70 -lon_max -45
+   ```
 
    This command will download data for the specified date and time and save it to the ./output directory, covering the defined latitude and longitude range.
 
@@ -69,6 +74,7 @@ Execute the script with the desired parameters:
 
    ```bash
    python littler2netCDF.py -i './output' -o './output_nc' -var 'Temperature (K)'
+   ```
 
 This command will convert the downloaded data from the ./output directory into NetCDF format and save it to the ./output_nc directory. The -var parameter specifies which variable to include in the NetCDF file.
 
