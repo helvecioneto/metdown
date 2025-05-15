@@ -470,7 +470,7 @@ class LittleRProcessor:
                 
             # Processar nome e unidade
             var_clean, unit, _ = parse_variable_name(var)
-            var_name = var_clean.replace(' ', '_').replace('-', '_')
+            var_name = var_clean.replace(' ', '_').replace('-', '_').upper()
             
             # Obter limites
             min_threshold, max_threshold = self.interesting_vars.get(var, (0, 0))
@@ -499,6 +499,9 @@ class LittleRProcessor:
                 # Preencher NaNs nas bordas
                 grid_values = fullgrid(grid_values)
                 
+                # Aplicar limites às variáveis
+                grid_values = self.apply_variable_limits(grid_values, var_name)
+                
                 # Armazenar dados e metadados
                 grid_data[var_name] = grid_values
                 var_attrs[var_name] = {
@@ -524,6 +527,12 @@ class LittleRProcessor:
         """Cria um dataset xarray a partir dos dados interpolados."""
         # Usar timestamp fornecido ou padrão
         time_value = timestamp if timestamp is not None else self.timestamp
+        
+        # Aplicar limites de valores para cada variável antes de criar o dataset
+        for var in list(grid_data.keys()):
+            if var not in ['lon', 'lat']:
+                # Aplicar limites conforme definidos em interesting_vars
+                grid_data[var] = self.apply_variable_limits(grid_data[var], var)
         
         # Criar dataset
         dataset = xr.Dataset(
@@ -557,6 +566,18 @@ class LittleRProcessor:
         
         if has_time_dimension:
             self.grid_data.attrs['temporal_aggregation'] = 'Dados agregados por médias horárias'
+    
+    def apply_variable_limits(self, data_array, var_name):
+        """Aplica limites mínimos e máximos aos dados interpolados."""
+        for orig_var, limits in self.interesting_vars.items():
+            _, _, std_var = parse_variable_name(orig_var)
+            if var_name == std_var:
+                min_val, max_val = limits
+                # Aplicar limites usando numpy clip
+                data_array = np.clip(data_array, min_val, max_val)
+                print(f"  • Aplicando limites à variável {var_name}: [{min_val}, {max_val}]")
+                break
+        return data_array
     
     def interpolate_using_metpy(self, interp_type='rbf', minimum_neighbors=1,
                              search_radius=100000, hres=5000,
@@ -769,6 +790,9 @@ class LittleRProcessor:
         # Preencher grade
         img_final = fullgrid(img_final)
         
+        # Aplicar limites definidos em interesting_vars
+        img_final = self.apply_variable_limits(img_final, var_name)
+        
         # Criar dataset final
         ds = xr.Dataset(
             {var_name: (['lat', 'lon'], img_final)},
@@ -813,6 +837,9 @@ class LittleRProcessor:
             
             # Preencher grade
             img_final = fullgrid(img_final)
+            
+            # Aplicar limites definidos em interesting_vars
+            img_final = self.apply_variable_limits(img_final, var_name)
             
             # Criar dataset
             ds = xr.Dataset(
