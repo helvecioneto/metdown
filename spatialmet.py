@@ -266,7 +266,41 @@ class LittleRProcessor:
             except:
                 pass
         
+        # Não fazemos limpeza automática aqui
+        # A limpeza será feita apenas quando necessário (para netcdf)
+        
         return True
+
+    def clean_data(self):
+        """Limpa os dados, removendo outliers e valores problemáticos"""
+        print("- Limpando dados e removendo outliers")
+        
+        # Percorrer as variáveis de interesse
+        for var in self.interesting_vars.keys():
+            if var in self.df.columns:
+                # Obter os thresholds para esta variável
+                min_threshold, max_threshold = self.interesting_vars[var]
+                
+                # Substituir valores fora dos thresholds por NaN
+                self.df[var] = self.df[var].mask(
+                    (self.df[var] < min_threshold) | (self.df[var] > max_threshold), 
+                    np.nan
+                )
+                
+                # Substituir valores problemáticos por NaN
+                self.df[var] = self.df[var].mask(self.df[var] > 800000, np.nan)  # Para valores próximos a 888888
+                self.df[var] = self.df[var].mask(self.df[var] < -800000, np.nan) # Para valores próximos a -888888
+                self.df[var] = self.df[var].mask(self.df[var] > 90000, np.nan)   # Para valores próximos a 99999
+                self.df[var] = self.df[var].mask(self.df[var] < -90000, np.nan)  # Para valores próximos a -99999
+                
+                # Contar valores válidos restantes
+                valid_count = self.df[var].notna().sum()
+                if valid_count > 0:
+                    min_val = self.df[var].min() if not np.isnan(self.df[var].min()) else "Todos NaN"
+                    max_val = self.df[var].max() if not np.isnan(self.df[var].max()) else "Todos NaN"
+                    print(f"  • {var}: {valid_count} valores válidos (min: {min_val}, max: {max_val})")
+                else:
+                    print(f"  • {var}: Nenhum valor válido após filtragem")
 
     def interpolate_to_grid(self):
         """Interpolate point data to a regular grid"""
@@ -324,33 +358,15 @@ class LittleRProcessor:
                 # Remove spaces and special characters to make NetCDF-safe names
                 var_clean = var_clean.replace(' ', '_').replace('-', '_')
                 
+                # Obter os limiares para esta variável
+                min_threshold, max_threshold = self.interesting_vars.get(var, (0, 0))
+                
                 try:
-                    # Cópia dos dados para não alterar o dataframe original
-                    var_values = self.df[var].copy()
+                    # Usar diretamente os valores já limpos
+                    var_values = self.df[var]
                     
-                    # Converter para numérico primeiro (caso esteja como string)
-                    var_values = pd.to_numeric(var_values, errors='coerce')
-                    
-                    # Substituir valores fora dos thresholds definidos para NODATA_VALUE
-                    min_threshold, max_threshold = self.interesting_vars[var]
-                    var_values = var_values.mask((var_values < min_threshold) | (var_values > max_threshold), np.nan)
-                    
-                    # Substituir valores problemáticos por NaN
-                    var_values = var_values.mask(var_values > 800000, np.nan)  # Para valores próximos a 888888
-                    var_values = var_values.mask(var_values < -800000, np.nan) # Para valores próximos a -888888
-                    var_values = var_values.mask(var_values > 90000, np.nan)   # Para valores próximos a 99999
-                    var_values = var_values.mask(var_values < -90000, np.nan)  # Para valores próximos a -99999
-                    
-                    # Verificar mínimo e máximo após substituição
-                    if not var_values.isna().all():
-                        min_val = var_values.min() if not np.isnan(var_values.min()) else "Todos NaN"
-                        max_val = var_values.max() if not np.isnan(var_values.max()) else "Todos NaN"
-                        # print(f"- Interpolando variável: {var_clean} ({var}), min: {min_val}, max: {max_val}")
-                        # print(f"  Thresholds aplicados: [{min_threshold}, {max_threshold}]")
-                    
-                    # Skip if all values are NaN or if we don't have enough valid data
+                    # Skip if all values are NaN
                     if var_values.isna().all():
-                        # print(f"- Ignorando variável {var_clean}: Todos os valores são NaN após filtro")
                         continue
                         
                     # Remove NaN values for interpolation
@@ -481,22 +497,11 @@ class LittleRProcessor:
         # Interpolar cada variável
         for var in variables_to_interpolate:
             try:
-                # Preparar dados para interpolação
-                var_values = pd.to_numeric(self.df[var], errors='coerce')
-                
-                # Aplicar thresholds
-                min_threshold, max_threshold = self.interesting_vars[var]
-                var_values = var_values.mask((var_values < min_threshold) | (var_values > max_threshold), np.nan)
-                
-                # Tratar valores problemáticos
-                var_values = var_values.mask(var_values > 800000, np.nan)
-                var_values = var_values.mask(var_values < -800000, np.nan)
-                var_values = var_values.mask(var_values > 90000, np.nan)
-                var_values = var_values.mask(var_values < -90000, np.nan)
+                # Usar diretamente os valores já limpos
+                var_values = self.df[var]
                 
                 # Se todos os valores são NaN, pular
                 if var_values.isna().all():
-                    # print(f"- Ignorando variável {var}: Todos os valores são NaN após filtro")
                     continue
                 
                 # Obter valores válidos
@@ -538,94 +543,73 @@ class LittleRProcessor:
                         rbf_func=self.rbf_func,
                         rbf_smooth=self.rbf_smooth
                     )
-                    print(f"- Interpolação MetPy concluída com sucesso para {var_name}")
-                except np.linalg.LinAlgError as e:
-                    if "singular" in str(e).lower() and interp_type == 'rbf':
-                        print(f"- Erro de matriz singular na interpolação RBF para {var_name}")
-                        print("  Tentando aumentar o parâmetro rbf_smooth para resolver o problema...")
+                    
+                    # CORREÇÃO: Reinterpolação para a grade definida pelo usuário
+                    # Criar a grade de destino com os limites exatos especificados pelo usuário
+                    lon_res, lat_res = self.grid_resolution
+                    lon_grid = np.linspace(self.lon_min, self.lon_max, int((self.lon_max-self.lon_min)/lon_res)+1)
+                    lat_grid = np.linspace(self.lat_min, self.lat_max, int((self.lat_max-self.lat_min)/lat_res)+1)
+                    lon_mesh, lat_mesh = np.meshgrid(lon_grid, lat_grid)
+                    
+                    # Converter pontos da grade para UTM para compatibilidade
+                    mesh_points = gpd.GeoDataFrame(
+                        geometry=gpd.points_from_xy(lon_mesh.flatten(), lat_mesh.flatten()),
+                        crs="EPSG:4326"
+                    )
+                    mesh_utm = mesh_points.to_crs("EPSG:3857")
+                    mesh_x = np.array([p.x for p in mesh_utm.geometry]).reshape(lon_mesh.shape)
+                    mesh_y = np.array([p.y for p in mesh_utm.geometry]).reshape(lat_mesh.shape)
+                    
+                    # Criar máscara para interpolar apenas dados válidos
+                    img_mask = ~np.isnan(img)
+                    
+                    # Reinterpolação para a grade do usuário
+                    if np.any(img_mask):
+                        # Aplanar matrizes para pontos
+                        valid_interp_x = gx[img_mask]
+                        valid_interp_y = gy[img_mask]
+                        valid_interp_values = img[img_mask]
                         
-                        # Tentar aumentar o valor de rbf_smooth para resolver o problema
-                        increased_smooth = max(0.1, self.rbf_smooth * 10)
+                        # Interpolar para a grade final
+                        img_final = griddata(
+                            np.column_stack((valid_interp_x, valid_interp_y)),
+                            valid_interp_values,
+                            (mesh_x, mesh_y),
+                            method='linear'
+                        )
                         
-                        try:
-                            print(f"  Tentando com rbf_smooth={increased_smooth}...")
-                            gx, gy, img = metpy_interpolate(
-                                valid_x, valid_y, valid_values,
-                                interp_type=interp_type,
-                                minimum_neighbors=minimum_neighbors,
-                                search_radius=search_radius,
-                                hres=hres,
-                                gamma=gamma,
-                                kappa_star=kappa_star,
-                                rbf_func=self.rbf_func,
-                                rbf_smooth=increased_smooth
-                            )
-                            print(f"- Interpolação MetPy concluída com sucesso após ajuste para {var_name}")
-                        except Exception as inner_e:
-                            # Se a tentativa com maior rbf_smooth falhar, tentar outro rbf_func
-                            print(f"  Ainda com erro após aumentar rbf_smooth: {str(inner_e)}")
-                            print("  Tentando com outra função RBF (multiquadric)...")
-                            
-                            try:
-                                gx, gy, img = metpy_interpolate(
-                                    valid_x, valid_y, valid_values,
-                                    interp_type=interp_type,
-                                    minimum_neighbors=minimum_neighbors,
-                                    search_radius=search_radius,
-                                    hres=hres,
-                                    gamma=gamma,
-                                    kappa_star=kappa_star,
-                                    rbf_func='multiquadric',  # Tentar com outra função RBF
-                                    rbf_smooth=increased_smooth
-                                )
-                                print(f"- Interpolação MetPy concluída com sucesso usando multiquadric para {var_name}")
-                            except Exception as final_e:
-                                print(f"- Todas as tentativas de interpolação RBF falharam para {var_name}")
-                                print(f"  Erro final: {str(final_e)}")
-                                raise
-                    else:
-                        # Se não for erro de matriz singular ou não for RBF, levantar o erro original
-                        raise
-                
-                # Preencher grade completa se necessário
-                img = fullgrid(img)
-
-                # Calcular limites da grade em coordenadas geográficas
-                min_x, max_x = gx.min(), gx.max()
-                min_y, max_y = gy.min(), gy.max()
-                
-                # Converter de volta para coordenadas geográficas
-                points = [Point(min_x, min_y), Point(max_x, max_y)]
-                geo_points = gpd.GeoSeries(points, crs="EPSG:3857")
-                geo_points = geo_points.to_crs("EPSG:4326")
-                
-                # Criar arrays de latitude e longitude
-                lons = np.linspace(geo_points.geometry[0].x, geo_points.geometry[1].x, img.shape[1])
-                lats = np.linspace(geo_points.geometry[0].y, geo_points.geometry[1].y, img.shape[0])
-                
-                # Criar Dataset do xarray
-                ds = xr.Dataset(
-                    {var_name: (['lat', 'lon'], img)},
-                    coords={
-                        'lon': lons,
-                        'lat': lats,
-                        'time': self.timestamp
+                        # Substituir a imagem original pela reinterpolada
+                        img = img_final
+                    
+                    # Criar dataset com as dimensões corretas do usuário
+                    ds = xr.Dataset(
+                        {var_name: (['lat', 'lon'], img)},
+                        coords={
+                            'lon': lon_grid,
+                            'lat': lat_grid,
+                            'time': self.timestamp
+                        }
+                    )
+                    
+                    # Obter os limiares para esta variável
+                    min_threshold, max_threshold = self.interesting_vars.get(var, (0, 0))
+                    
+                    # Adicionar metadados
+                    ds[var_name].attrs = {
+                        'long_name': var_clean,
+                        'units': unit,
+                        '_FillValue': NODATA_VALUE,
+                        'valid_range': f"{min_threshold}, {max_threshold}",
+                        'interpolation_method': interp_type,
+                        'search_radius_meters': search_radius,
+                        'resolution_meters': hres
                     }
-                )
-                
-                # Adicionar metadados
-                ds[var_name].attrs = {
-                    'long_name': var_clean,
-                    'units': unit,
-                    '_FillValue': NODATA_VALUE,
-                    'valid_range': f"{min_threshold}, {max_threshold}",
-                    'interpolation_method': interp_type,
-                    'search_radius_meters': search_radius,
-                    'resolution_meters': hres
-                }
-                
-                datasets.append(ds)
-                
+                    
+                    datasets.append(ds)
+                    
+                except Exception as e:
+                    print(f"- Erro ao interpolar {var}: {e}")
+            
             except Exception as e:
                 print(f"- Erro ao interpolar {var}: {e}")
         
@@ -738,8 +722,12 @@ class LittleRProcessor:
         if self.process_data():
             print(f"- Dados processados com sucesso: {len(self.df)} registros")
             
-            # Interpolate to grid if NetCDF output is requested
+            # Se estamos gerando NetCDF, precisamos limpar os dados antes da interpolação
             if self.output_type == 'netcdf' and self.grid_resolution is not None:
+                # Limpar outliers antes de interpolar
+                print("- Limpando outliers para interpolação...")
+                self.clean_data()
+                
                 if self.interpolation_method == 'metpy':
                     # Converter grid_resolution de graus para metros (aproximado no equador)
                     lon_res, lat_res = self.grid_resolution
