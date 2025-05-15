@@ -198,7 +198,9 @@ class LittleRProcessor:
             
         response = requests.get(url, stream=True)
         total_size = int(response.headers.get('content-length', 0))
-        progress_bar = tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024)
+        url_filename = url.split('/')[-1]  # Extract filename from URL
+        progress_bar = tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024,
+                   desc=f"- Baixando de: \t{url}\t")
         file_in_memory = BytesIO()
         
         for chunk in response.iter_content(chunk_size=1024):
@@ -220,14 +222,14 @@ class LittleRProcessor:
             hour=self.timestamp.strftime('%H')
         )
         
-        print(f"- Baixando de: {url}")
+        # print(f"- Baixando de: {url}")
         file = self.download_file(url)
         if file is None:
             return False
             
         # Processar dados
         data = file.read()
-        print("- Processando dados")
+        print("- Convertendo dados para dataframe...")
         
         # Dividir e processar linhas
         split_data = re.split(r"\n", data.decode('utf-8', errors='ignore'))
@@ -247,7 +249,7 @@ class LittleRProcessor:
         self.df = pd.concat([header_df, data_df], axis=1)
         
         # Processar coordenadas e aplicar filtro geográfico
-        print(f"- Aplicando pontos geográficos e recortando região [%.2f,%.2f,%.2f,%.2f]" % 
+        print(f"- Convertendo para GeoDataframe e recortando região [%.2f,%.2f,%.2f,%.2f]..." % 
               (self.lat_min, self.lat_max, self.lon_min, self.lon_max))
         
         self._apply_geo_filter()
@@ -295,7 +297,7 @@ class LittleRProcessor:
                     format='%Y%m%d%H%M%S', 
                     errors='coerce'
                 )
-                print(f"- Coluna 'datetime' criada ({self.df['datetime'].nunique()} timestamps únicos)")
+                # print(f"- Coluna 'datetime' criada ({self.df['datetime'].nunique()} timestamps únicos)")
             except Exception as e:
                 print(f"- Erro ao converter coluna Date para datetime: {e}")
     
@@ -305,7 +307,7 @@ class LittleRProcessor:
             print("- Aviso: Coluna datetime não existe, não será feita agregação temporal")
             return False
         
-        print("- Realizando agregação horária dos dados...")
+        # print("- Realizando agregação horária dos dados...")
         
         # Truncar para hora
         self.df['hour'] = self.df['datetime'].dt.floor('H')
@@ -327,8 +329,8 @@ class LittleRProcessor:
         count_per_group = grouped.size().reset_index(name='num_obs')
         df_hourly = df_hourly.merge(count_per_group, on=['hour', 'Longitude', 'Latitude'])
         
-        print(f"- Dados agregados: {len(self.df)} observações → {len(df_hourly)} médias horárias")
-        print(f"- Timestamps únicos após agregação: {df_hourly['hour'].nunique()}")
+        # print(f"- Dados agregados: {len(self.df)} observações → {len(df_hourly)} médias horárias")
+        # print(f"- Timestamps únicos após agregação: {df_hourly['hour'].nunique()}")
         
         # Atualizar estado
         self.df = df_hourly
@@ -338,7 +340,7 @@ class LittleRProcessor:
     
     def clean_data(self):
         """Limpa os dados, removendo outliers e valores problemáticos."""
-        print("- Limpando dados e removendo outliers")
+        # print("- Limpando dados e removendo outliers")
         
         for var in self.interesting_vars.keys():
             if var not in self.df.columns:
@@ -373,16 +375,17 @@ class LittleRProcessor:
         if valid_count > 0:
             min_val = self.df[var].min() if not np.isnan(self.df[var].min()) else "Todos NaN"
             max_val = self.df[var].max() if not np.isnan(self.df[var].max()) else "Todos NaN"
-            print(f"  • {var}: {valid_count} valores válidos (min: {min_val}, max: {max_val})")
+            # print(f"  • {var}: {valid_count} valores válidos (min: {min_val}, max: {max_val})")
         else:
-            print(f"  • {var}: Nenhum valor válido após filtragem")
+            # print(f"  • {var}: Nenhum valor válido após filtragem")
+            pass
     
     def interpolate_to_grid(self):
         """Interpola dados pontuais para uma grade regular com dimensão temporal."""
         if self.df is None or self.grid_resolution is None:
             return False
             
-        print(f"- Interpolando para grade com resolução: {self.grid_resolution}°")
+        # print(f"- Interpolando para grade com resolução: {self.grid_resolution}°")
         
         # Verificar se temos dimensão temporal
         has_time_dimension = 'hour' in self.df.columns and len(self.df['hour'].unique()) > 1
@@ -426,7 +429,7 @@ class LittleRProcessor:
         
         # Interpolar para cada timestamp
         for timestamp in self.unique_timestamps:
-            print(f"  • Interpolando para {timestamp.strftime('%Y-%m-%d %H:%M')}")
+            # print(f"  • Interpolando para {timestamp.strftime('%Y-%m-%d %H:%M')}")
             
             # Filtrar dados para este timestamp
             df_time = self.df[self.df['hour'] == timestamp]
@@ -575,7 +578,7 @@ class LittleRProcessor:
                 min_val, max_val = limits
                 # Aplicar limites usando numpy clip
                 data_array = np.clip(data_array, min_val, max_val)
-                print(f"  • Aplicando limites à variável {var_name}: [{min_val}, {max_val}]")
+                # print(f"  • Aplicando limites à variável {var_name}: [{min_val}, {max_val}]")
                 break
         return data_array
     
@@ -590,7 +593,7 @@ class LittleRProcessor:
         if self.df is None:
             return False
             
-        print(f"- Interpolando para grade usando MetPy ({interp_type})")
+        # print(f"- Interpolando para grade usando MetPy ({interp_type})")
         
         # Verificar dimensão temporal
         has_time_dimension = (hasattr(self, 'unique_timestamps') and 
@@ -618,12 +621,12 @@ class LittleRProcessor:
     def _interpolate_metpy_with_time_dimension(self, interp_type, minimum_neighbors, 
                                              search_radius, hres, gamma, kappa_star):
         """Interpola com MetPy para múltiplos timestamps."""
-        print(f"- Interpolando dados com MetPy com dimensão temporal ({len(self.unique_timestamps)} timestamps)")
+        print(f"- Interpolando dados com MetPy ({interp_type}) com ({len(self.unique_timestamps)} timestamps)...")
         
         time_datasets = []
         
         for timestamp in self.unique_timestamps:
-            print(f"  • Interpolando para {timestamp.strftime('%Y-%m-%d %H:%M')}")
+            # print(f"  • Interpolando para {timestamp.strftime('%Y-%m-%d %H:%M')}")
             
             # Filtrar dados para este timestamp
             df_time = self.df[self.df['hour'] == timestamp]
@@ -658,7 +661,7 @@ class LittleRProcessor:
         
         # Obter variáveis para interpolação
         variables = self._get_variables_to_interpolate()
-        print(f"  • Interpolando {len(variables)} variáveis de interesse")
+        # print(f"  • Interpolando {len(variables)} variáveis de interesse")
         
         # Obter limites UTM
         min_x, max_x, min_y, max_y = get_utm_boundaries(
