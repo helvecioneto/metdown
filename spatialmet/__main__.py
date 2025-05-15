@@ -1057,7 +1057,7 @@ if __name__ == '__main__':
                       help='Tipo de saída: csv/geojson/gpkg/shapefile (pontos originais) ou netcdf (grade espacial)')
     
     parser.add_argument('-i', '--interpolation', dest='interpolation', type=str,
-                      choices=['linear', 'cubic', 'nearest', 'metpy'], default='metpy',
+                      choices=['linear', 'cubic', 'nearest', 'metpy'], default='linear',
                       help='Método de interpolação (padrão: linear)')
     
     # Argumentos específicos do MetPy

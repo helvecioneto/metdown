@@ -17,7 +17,7 @@ A biblioteca oferece múltiplas funcionalidades:
 
 ### Requisitos
 
-- Python 3.6 ou superior
+- Python 3.8 ou superior
 - Bibliotecas dependentes (instaladas automaticamente)
 
 ### Passos para Instalação
@@ -65,7 +65,7 @@ python -m spatialmet -t "2023-01-01 00:00:00" -o ./output -lat_min -10 -lat_max 
 
 | Parâmetro | Descrição | Padrão |
 |-----------|-----------|--------|
-| `-t, --timestamp` | Horário para download (formato: YYYY-MM-DD HH:MM:SS) | 24h atrás, horário múltiplo de 6h |
+| `-t, --timestamp` | Horário para download (formato: YYYY-MM-DD HH:MM:SS) | 24h atrás da hora atual |
 | `-o, --output` | Diretório de saída | ./output |
 
 ### Parâmetros de Região Geográfica
@@ -81,7 +81,7 @@ python -m spatialmet -t "2023-01-01 00:00:00" -o ./output -lat_min -10 -lat_max 
 
 | Parâmetro | Descrição | Padrão |
 |-----------|-----------|--------|
-| `-grid, --grid_resolution` | Resolução da grade em graus [lon_res lat_res] | Sem grade |
+| `-grid, --grid_resolution` | Resolução da grade em graus [lon_res lat_res] | 1 1 (graus) |
 | `-file_type` | Tipo de arquivo de saída (csv, netcdf, geojson, gpkg, shapefile) | csv |
 | `-i, --interpolation` | Método de interpolação (linear, cubic, nearest, metpy) | linear |
 
