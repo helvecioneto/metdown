@@ -1049,14 +1049,15 @@ if __name__ == '__main__':
     
     # Argumentos de processamento e saída
     parser.add_argument('-grid', '--grid_resolution', dest='grid_resolution', type=float, nargs=2,
-                      help='Resolução da grade [lon_res lat_res] em graus (padrão: sem grade)', default=None)
+                      help='Resolução da grade [lon_res lat_res] em graus (padrão: 1.0 1.0)',
+                      default=(1.0, 1.0))
     
     parser.add_argument('-file_type', dest='output_type', type=str,
                       choices=['csv', 'netcdf', 'geojson', 'gpkg', 'shapefile'], default='csv',
                       help='Tipo de saída: csv/geojson/gpkg/shapefile (pontos originais) ou netcdf (grade espacial)')
     
     parser.add_argument('-i', '--interpolation', dest='interpolation', type=str,
-                      choices=['linear', 'cubic', 'nearest', 'metpy'], default='linear',
+                      choices=['linear', 'cubic', 'nearest', 'metpy'], default='metpy',
                       help='Método de interpolação (padrão: linear)')
     
     # Argumentos específicos do MetPy
