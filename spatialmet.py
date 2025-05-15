@@ -108,7 +108,7 @@ class LittleRProcessor:
         'Precip': (0, 1000),
         'Pressure (Pa)': (0, 100000),
         'Height (m)': (0, 5000),
-        'Temperature (K)': (100, 400),
+        'Temperature (K)': (270, 300),
         'Dew point (K)': (0, 400),
         'Wind speed (m/s)': (0, 100),
         'Wind direction (deg)': (0, 360),
@@ -184,6 +184,7 @@ class LittleRProcessor:
         
         self.df = None
         self.grid_data = None
+        self.unique_timestamps = None
 
     def download_file(self, url):
         """Download file from URL with progress bar"""
@@ -266,8 +267,56 @@ class LittleRProcessor:
             except:
                 pass
         
+        # Converter a coluna 'Date' para datetime
+        if 'Date' in self.df.columns:
+            try:
+                # Converter coluna Date: 20250514090000 -> datetime
+                self.df['datetime'] = pd.to_datetime(self.df['Date'].astype(str), format='%Y%m%d%H%M%S', errors='coerce')
+                print(f"- Coluna 'datetime' criada a partir de 'Date' ({self.df['datetime'].nunique()} timestamps únicos)")
+            except Exception as e:
+                print(f"- Erro ao converter coluna Date para datetime: {e}")
+        
         # Não fazemos limpeza automática aqui
-        # A limpeza será feita apenas quando necessário (para netcdf)
+        return True
+
+    def aggregate_hourly_data(self):
+        """Agrupa dados por hora e calcula médias horárias"""
+        if 'datetime' not in self.df.columns:
+            print("- Aviso: Coluna datetime não existe, não será feita agregação temporal")
+            return False
+        
+        print("- Realizando agregação horária dos dados...")
+        
+        # Criar coluna com apenas a parte da hora (truncando minutos e segundos)
+        self.df['hour'] = self.df['datetime'].dt.floor('H')
+        
+        # Obter variáveis numéricas para agregação (excluindo colunas não numéricas e de QC)
+        numeric_vars = [col for col in self.df.columns 
+                        if col in self.interesting_vars.keys() and
+                        not col.endswith('-QC') and col not in ['Longitude', 'Latitude']]
+        
+        # Agrupar por hora e ponto geográfico
+        grouped = self.df.groupby(['hour', 'Longitude', 'Latitude'])
+        
+        # Calcular média horária para cada variável numérica
+        agg_dict = {var: 'mean' for var in numeric_vars}
+        agg_dict['ID'] = 'first'  # Manter ID da estação como identificador
+        
+        # Aplicar agregação
+        df_hourly = grouped.agg(agg_dict).reset_index()
+        
+        # Contar número de observações em cada grupo
+        count_per_group = grouped.size().reset_index(name='num_obs')
+        df_hourly = df_hourly.merge(count_per_group, on=['hour', 'Longitude', 'Latitude'])
+        
+        print(f"- Dados agregados: {len(self.df)} observações -> {len(df_hourly)} médias horárias")
+        print(f"- Timestamps únicos após agregação: {df_hourly['hour'].nunique()}")
+        
+        # Substituir o dataframe original pelo agregado
+        self.df = df_hourly
+        
+        # Registrar os timestamps únicos para uso posterior
+        self.unique_timestamps = sorted(self.df['hour'].unique())
         
         return True
 
@@ -303,28 +352,155 @@ class LittleRProcessor:
                     print(f"  • {var}: Nenhum valor válido após filtragem")
 
     def interpolate_to_grid(self):
-        """Interpolate point data to a regular grid"""
+        """Interpolate point data to a regular grid with time dimension"""
         if self.df is None or self.grid_resolution is None:
             return False
             
         print(f"- Interpolando para grade com resolução: {self.grid_resolution}°")
+        
+        # Verificar se temos dimensão temporal
+        has_time_dimension = 'hour' in self.df.columns and len(self.df['hour'].unique()) > 1
         
         # Create grid coordinates
         lon_res, lat_res = self.grid_resolution
         lon_grid = np.arange(self.lon_min, self.lon_max + lon_res, lon_res)
         lat_grid = np.arange(self.lat_min, self.lat_max + lat_res, lat_res)
         
-        # Create meshgrid
-        lon_mesh, lat_mesh = np.meshgrid(lon_grid, lat_grid)
-        
-        # Get coordinates and values
-        points = self.df[['Longitude', 'Latitude']].values
-        
         # Determine the interpolation method to use
         interpolation_method = self.interpolation_method
         if interpolation_method == 'metpy':
             interpolation_method = 'linear'  # Use 'linear' as fallback for 'metpy'
 
+        # Define valor único para nodata
+        NODATA_VALUE = 99999
+        
+        # Variáveis a serem interpoladas
+        variables_to_interpolate = [col for col in self.df.columns 
+                                   if col in self.interesting_vars.keys() and
+                                   not col.endswith('-QC') and col not in ['Longitude', 'Latitude', 'hour', 'datetime']]
+        
+        # Se não temos dimensão temporal, usamos o método original
+        if not has_time_dimension:
+            return self._interpolate_single_time(self.df, lon_grid, lat_grid, variables_to_interpolate, 
+                                                interpolation_method, NODATA_VALUE)
+        
+        # Com dimensão temporal, precisamos interpolar para cada timestamp
+        print(f"- Interpolando dados com dimensão temporal ({len(self.unique_timestamps)} timestamps)")
+        
+        # Lista para armazenar datasets para cada timestamp
+        time_datasets = []
+        
+        # Interpolar para cada timestamp
+        for timestamp in self.unique_timestamps:
+            print(f"  • Interpolando para {timestamp.strftime('%Y-%m-%d %H:%M')}")
+            
+            # Filtrar dados para este timestamp
+            df_time = self.df[self.df['hour'] == timestamp]
+            
+            # Interpolar para este timestamp
+            success, ds_time = self._interpolate_single_time(df_time, lon_grid, lat_grid, 
+                                                            variables_to_interpolate, 
+                                                            interpolation_method, NODATA_VALUE,
+                                                            timestamp=timestamp)
+            
+            if success:
+                time_datasets.append(ds_time)
+        
+        # Se não temos datasets, falhar
+        if not time_datasets:
+            print("- Nenhum timestamp pôde ser interpolado com sucesso")
+            return False
+        
+        # Combinar todos os datasets com a dimensão temporal
+        self.grid_data = xr.concat(time_datasets, dim='time')
+        
+        # Adicionar atributos globais
+        self.grid_data.attrs['title'] = 'UCAR Little-R Surface Observations - Multiple Timestamps'
+        self.grid_data.attrs['source'] = 'UCAR RDA ds461.0'
+        self.grid_data.attrs['creation_date'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+        self.grid_data.attrs['nodata_description'] = f'Valores {NODATA_VALUE} representam dados ausentes ou fora dos limites válidos'
+        self.grid_data.attrs['variables_description'] = 'Aplicados thresholds conforme definido em interesting_vars'
+        self.grid_data.attrs['temporal_aggregation'] = 'Dados agregados por médias horárias'
+        
+        return True
+
+    def interpolate_using_metpy(self, interp_type='rbf', minimum_neighbors=1,
+                             search_radius=100000, hres=5000,
+                             gamma=0.25, kappa_star=5.052):
+        """Interpola dados pontuais para uma grade regular usando MetPy com dimensão temporal"""
+        if not METPY_AVAILABLE:
+            print("- Erro: MetPy não está instalado. Usando interpolação regular.")
+            return self.interpolate_to_grid()
+            
+        if self.df is None:
+            return False
+            
+        print(f"- Interpolando para grade usando MetPy ({interp_type})")
+        
+        # Verificar se temos dimensão temporal
+        has_time_dimension = hasattr(self, 'unique_timestamps') and self.unique_timestamps is not None and len(self.unique_timestamps) > 1
+        
+        # Se não temos dimensão temporal, usamos o método para um único timestamp
+        if not has_time_dimension:
+            success, dataset = self._interpolate_metpy_single_time(
+                self.df, interp_type, minimum_neighbors,
+                search_radius, hres, gamma, kappa_star
+            )
+            if success:
+                self.grid_data = dataset
+                return True
+            return False
+        
+        # Com dimensão temporal, precisamos interpolar para cada timestamp
+        print(f"- Interpolando dados com MetPy com dimensão temporal ({len(self.unique_timestamps)} timestamps)")
+        
+        # Lista para armazenar datasets para cada timestamp
+        time_datasets = []
+        
+        # Interpolar para cada timestamp
+        for timestamp in self.unique_timestamps:
+            print(f"  • Interpolando para {timestamp.strftime('%Y-%m-%d %H:%M')}")
+            
+            # Filtrar dados para este timestamp
+            df_time = self.df[self.df['hour'] == timestamp]
+            
+            # Interpolar para este timestamp
+            success, ds_time = self._interpolate_metpy_single_time(
+                df_time, interp_type, minimum_neighbors,
+                search_radius, hres, gamma, kappa_star,
+                timestamp=timestamp
+            )
+            
+            if success:
+                time_datasets.append(ds_time)
+        
+        # Se não temos datasets, falhar
+        if not time_datasets:
+            print("- Nenhum timestamp pôde ser interpolado com sucesso")
+            return False
+        
+        # Combinar todos os datasets com a dimensão temporal
+        self.grid_data = xr.concat(time_datasets, dim='time')
+        
+        # Adicionar atributos globais
+        self.grid_data.attrs['title'] = 'UCAR Little-R Surface Observations - Multiple Timestamps'
+        self.grid_data.attrs['source'] = 'UCAR RDA ds461.0'
+        self.grid_data.attrs['creation_date'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+        self.grid_data.attrs['interpolation_method'] = interp_type
+        self.grid_data.attrs['temporal_aggregation'] = 'Dados agregados por médias horárias'
+        self.grid_data.attrs['author'] = 'Helvecio Neto (2024) - helecioblneto@gmail.com'
+        
+        return True
+
+    def _interpolate_single_time(self, df_time, lon_grid, lat_grid, variables_to_interpolate, 
+                                interpolation_method, NODATA_VALUE, timestamp=None):
+        """Interpola dados para um único timestamp"""
+        # Create meshgrid
+        lon_mesh, lat_mesh = np.meshgrid(lon_grid, lat_grid)
+        
+        # Get coordinates and values
+        points = df_time[['Longitude', 'Latitude']].values
+        
         # Initialize a dictionary to hold all gridded variables
         grid_data_dict = {
             'lon': lon_grid,
@@ -334,26 +510,16 @@ class LittleRProcessor:
         # Dictionary to store variable metadata (units)
         var_attrs = {}
         
-        # Define valor único para nodata
-        NODATA_VALUE = 99999
-        
-        # Filtrar para usar apenas as variáveis listadas em interesting_vars
-        variables_to_interpolate = [col for col in self.df.columns 
-                                   if col in self.interesting_vars.keys() and
-                                   not col.endswith('-QC') and col not in ['Longitude', 'Latitude']]
-        
-        # print(f"- Interpolando {len(variables_to_interpolate)} variáveis de interesse")
-        
+        # Interpolar cada variável
         for var in variables_to_interpolate:
-            if var in self.df.columns:
+            if var in df_time.columns:
                 # Extract variable name and unit
                 var_clean = var
                 unit = ""
                 if '(' in var and ')' in var:
-                    # Extract the variable name (without the unit) and the unit
                     parts = var.split('(')
                     var_clean = parts[0].strip()
-                    unit = '(' + parts[1]  # Include the parentheses
+                    unit = '(' + parts[1]
                 
                 # Remove spaces and special characters to make NetCDF-safe names
                 var_clean = var_clean.replace(' ', '_').replace('-', '_')
@@ -363,7 +529,7 @@ class LittleRProcessor:
                 
                 try:
                     # Usar diretamente os valores já limpos
-                    var_values = self.df[var]
+                    var_values = df_time[var]
                     
                     # Skip if all values are NaN
                     if var_values.isna().all():
@@ -378,7 +544,7 @@ class LittleRProcessor:
                                 points[valid_indices], 
                                 values[valid_indices], 
                                 (lon_mesh, lat_mesh), 
-                                method=interpolation_method  # Use the local variable
+                                method=interpolation_method
                             )
                             # Preencher grade completa se necessário
                             grid_values = fullgrid(grid_values)
@@ -395,97 +561,83 @@ class LittleRProcessor:
                         except Exception as e:
                             print(f"Erro na interpolação de {var}: {e}")
                     else:
-                        # print(f"- Ignorando variável {var_clean}: Número insuficiente de pontos válidos ({np.sum(valid_indices)})")
                         pass
                 except Exception as e:
                     print(f"Ignorando variável {var} (não numérica): {e}")
         
         if len(grid_data_dict) <= 2:  # Só temos lon e lat
-            print("- Nenhuma variável numérica adequada para interpolação foi encontrada")
-            return False
+            print("  • Nenhuma variável numérica adequada para interpolação foi encontrada")
+            return False, None
+        
+        # Usar timestamp fornecido ou padrão da classe
+        time_value = timestamp if timestamp is not None else self.timestamp
         
         # Convert to xarray Dataset
-        self.grid_data = xr.Dataset(
+        dataset = xr.Dataset(
             {var: (['lat', 'lon'], grid_data_dict[var]) 
              for var in grid_data_dict if var not in ['lon', 'lat']},
             coords={
                 'lon': grid_data_dict['lon'],
                 'lat': grid_data_dict['lat'],
-                'time': self.timestamp
+                'time': [time_value]  # Usar lista para criar dimensão
             }
         )
         
         # Add variable attributes (metadata) and set nodata values
         for var_name, attrs in var_attrs.items():
-            if var_name in self.grid_data:
+            if var_name in dataset:
                 # Substituir NaNs pelo valor NODATA
-                self.grid_data[var_name] = self.grid_data[var_name].fillna(NODATA_VALUE)
+                dataset[var_name] = dataset[var_name].fillna(NODATA_VALUE)
                 
                 # Aplicar todos os atributos
                 for attr_name, attr_value in attrs.items():
-                    self.grid_data[var_name].attrs[attr_name] = attr_value
+                    dataset[var_name].attrs[attr_name] = attr_value
         
-        # Adicionar atributos globais
-        self.grid_data.attrs['title'] = f'UCAR Little-R Surface Observations - {self.timestamp.strftime("%Y-%m-%d %H:%M")}'
-        self.grid_data.attrs['source'] = 'UCAR RDA ds461.0'
-        self.grid_data.attrs['creation_date'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
-        self.grid_data.attrs['nodata_description'] = f'Valores {NODATA_VALUE} representam dados ausentes ou fora dos limites válidos'
-        self.grid_data.attrs['variables_description'] = 'Aplicados thresholds conforme definido em interesting_vars'
-        
-        return True
+        return True, dataset
 
-    def interpolate_using_metpy(self, interp_type='rbf', minimum_neighbors=1,
-                              search_radius=100000, hres=5000,
-                              gamma=0.25, kappa_star=5.052):
-        """
-        Interpola dados pontuais para uma grade regular usando MetPy
-        
-        Parameters:
-        -----------
-        interp_type : str
-            Tipo de interpolação a ser usada ('cressman', 'barnes', 'natural_neighbor', 'linear')
-        minimum_neighbors : int
-            Número mínimo de vizinhos a considerar na interpolação
-        search_radius : float
-            Raio de busca em metros para interpolação
-        hres : float
-            Resolução horizontal da grade em metros
-        gamma : float
-            Parâmetro gamma para interpolação de Barnes
-        kappa_star : float
-            Parâmetro kappa_star para interpolação de Barnes
-        
-        Returns:
-        --------
-        bool
-            True se a interpolação foi bem-sucedida, False caso contrário
-        """
+    def _interpolate_metpy_single_time(self, df_time, interp_type, minimum_neighbors,
+                                     search_radius, hres, gamma, kappa_star, timestamp=None):
+        """Interpola dados para um único timestamp usando MetPy"""
         if not METPY_AVAILABLE:
-            print("- Erro: MetPy não está instalado. Usando interpolação regular.")
-            return self.interpolate_to_grid()
-            
-        if self.df is None:
-            return False
-            
-        print(f"- Interpolando para grade usando MetPy ({interp_type})")
+            print("- Erro: MetPy não está instalado. Não é possível realizar esta interpolação.")
+            return False, None
         
         # Define valor único para nodata
         NODATA_VALUE = 99999
         
         # Filtrar para usar apenas as variáveis listadas em interesting_vars
-        variables_to_interpolate = [col for col in self.df.columns 
-                                   if col in self.interesting_vars.keys() and
-                                   not col.endswith('-QC') and col not in ['Longitude', 'Latitude']]
+        variables_to_interpolate = [col for col in df_time.columns 
+                                  if col in self.interesting_vars.keys() and
+                                  not col.endswith('-QC') and col not in ['Longitude', 'Latitude', 'hour', 'datetime']]
         
-        print(f"- Interpolando {len(variables_to_interpolate)} variáveis de interesse")
+        print(f"  • Interpolando {len(variables_to_interpolate)} variáveis de interesse")
         
-        # Converter para GeoDataFrame e projetar para pseudo-UTM
+        # Calcular dimensões em UTM
+        bbox_points = [
+            Point(self.lon_min, self.lat_min),
+            Point(self.lon_max, self.lat_max)
+        ]
+        bbox_gdf = gpd.GeoDataFrame(geometry=bbox_points, crs="EPSG:4326")
+        bbox_utm = bbox_gdf.to_crs("EPSG:3857")
+        
+        min_x = bbox_utm.geometry[0].x
+        min_y = bbox_utm.geometry[0].y
+        max_x = bbox_utm.geometry[1].x
+        max_y = bbox_utm.geometry[1].y
+        
+        # Calcular número de células
+        x_size = int(np.ceil((max_x - min_x) / hres))
+        y_size = int(np.ceil((max_y - min_y) / hres))
+        x_size = max(x_size, 10)
+        y_size = max(y_size, 10)
+        
+        # Converter coordenadas de pontos para UTM
         gdf = gpd.GeoDataFrame(
-            self.df, 
-            geometry=gpd.points_from_xy(self.df.Longitude, self.df.Latitude),
+            df_time, 
+            geometry=gpd.points_from_xy(df_time.Longitude, df_time.Latitude),
             crs="EPSG:4326"
         )
-        gdf_utm = gdf.to_crs("EPSG:3857")  # Projeção Web Mercator
+        gdf_utm = gdf.to_crs("EPSG:3857")
         
         # Extrair coordenadas x, y em UTM
         x = np.array([point.x for point in gdf_utm.geometry])
@@ -497,26 +649,7 @@ class LittleRProcessor:
         # Interpolar cada variável
         for var in variables_to_interpolate:
             try:
-                # Usar diretamente os valores já limpos
-                var_values = self.df[var]
-                
-                # Se todos os valores são NaN, pular
-                if var_values.isna().all():
-                    continue
-                
-                # Obter valores válidos
-                values = var_values.values
-                valid_indices = ~np.isnan(values)
-                valid_x = x[valid_indices]
-                valid_y = y[valid_indices]
-                valid_values = values[valid_indices]
-                
-                # Verificar se temos pontos suficientes
-                if len(valid_values) <= minimum_neighbors:
-                    # print(f"- Ignorando variável {var}: Número insuficiente de pontos válidos ({len(valid_values)})")
-                    continue
-                    
-                # Extrair nome e unidade da variável
+                # Processar nome e unidade
                 var_clean = var
                 unit = ""
                 if '(' in var and ')' in var:
@@ -524,135 +657,153 @@ class LittleRProcessor:
                     var_clean = parts[0].strip()
                     unit = parts[1].strip(')')
                 
-                # Nome seguro para NetCDF
                 var_name = var_clean.replace(' ', '_').replace('-', '_').upper()
                 
-                # print(f"- Interpolando variável: {var_name} (pontos válidos: {len(valid_values)})")
+                # Obter valores válidos
+                var_values = df_time[var]
+                if var_values.isna().all():
+                    continue
+                    
+                values = var_values.values
+                valid_indices = ~np.isnan(values)
+                valid_x = x[valid_indices]
+                valid_y = y[valid_indices]
+                valid_values = values[valid_indices]
                 
-                # Realizar interpolação usando MetPy
-                # print(f"- Usando interpolação MetPy: {interp_type}")
+                if len(valid_values) < minimum_neighbors:
+                    continue
+                
+                # Obter os limiares
+                min_threshold, max_threshold = self.interesting_vars.get(var, (0, 0))
+                
+                # CORREÇÃO: Remover 'boundary' - usar a abordagem padrão do MetPy
                 try:
+                    # Apenas passar as coordenadas e valores, sem o parâmetro boundary
                     gx, gy, img = metpy_interpolate(
                         valid_x, valid_y, valid_values,
                         interp_type=interp_type,
+                        hres=hres,
                         minimum_neighbors=minimum_neighbors,
                         search_radius=search_radius,
-                        hres=hres,
                         gamma=gamma,
                         kappa_star=kappa_star,
                         rbf_func=self.rbf_func,
                         rbf_smooth=self.rbf_smooth
                     )
                     
-                    # CORREÇÃO: Reinterpolação para a grade definida pelo usuário
-                    # Criar a grade de destino com os limites exatos especificados pelo usuário
+                    # Após obter a interpolação, recortar para os limites desejados
+                    # e re-amostrar para a resolução especificada pelo usuário
                     lon_res, lat_res = self.grid_resolution
-                    lon_grid = np.linspace(self.lon_min, self.lon_max, int((self.lon_max-self.lon_min)/lon_res)+1)
-                    lat_grid = np.linspace(self.lat_min, self.lat_max, int((self.lat_max-self.lat_min)/lat_res)+1)
-                    lon_mesh, lat_mesh = np.meshgrid(lon_grid, lat_grid)
+                    lons = np.linspace(self.lon_min, self.lon_max, int((self.lon_max-self.lon_min)/lon_res)+1)
+                    lats = np.linspace(self.lat_min, self.lat_max, int((self.lat_max-self.lat_min)/lat_res)+1)
                     
-                    # Converter pontos da grade para UTM para compatibilidade
-                    mesh_points = gpd.GeoDataFrame(
-                        geometry=gpd.points_from_xy(lon_mesh.flatten(), lat_mesh.flatten()),
-                        crs="EPSG:4326"
-                    )
-                    mesh_utm = mesh_points.to_crs("EPSG:3857")
-                    mesh_x = np.array([p.x for p in mesh_utm.geometry]).reshape(lon_mesh.shape)
-                    mesh_y = np.array([p.y for p in mesh_utm.geometry]).reshape(lat_mesh.shape)
+                    # Converter coordenadas UTM para geográficas
+                    gx_gdf = gpd.GeoDataFrame(
+                        geometry=[Point(x, 0) for x in gx[0]], crs="EPSG:3857"
+                    ).to_crs("EPSG:4326")
+                    gy_gdf = gpd.GeoDataFrame(
+                        geometry=[Point(0, y) for y in gy[:, 0]], crs="EPSG:3857"
+                    ).to_crs("EPSG:4326")
                     
-                    # Criar máscara para interpolar apenas dados válidos
-                    img_mask = ~np.isnan(img)
+                    x_lon = np.array([p.x for p in gx_gdf.geometry])
+                    y_lat = np.array([p.y for p in gy_gdf.geometry])
                     
-                    # Reinterpolação para a grade do usuário
-                    if np.any(img_mask):
-                        # Aplanar matrizes para pontos
-                        valid_interp_x = gx[img_mask]
-                        valid_interp_y = gy[img_mask]
-                        valid_interp_values = img[img_mask]
-                        
-                        # Interpolar para a grade final
-                        img_final = griddata(
-                            np.column_stack((valid_interp_x, valid_interp_y)),
-                            valid_interp_values,
-                            (mesh_x, mesh_y),
-                            method='linear'
-                        )
-                        
-                        # Substituir a imagem original pela reinterpolada
-                        img = img_final
-                    
-                    # Criar dataset com as dimensões corretas do usuário
-                    ds = xr.Dataset(
-                        {var_name: (['lat', 'lon'], img)},
-                        coords={
-                            'lon': lon_grid,
-                            'lat': lat_grid,
-                            'time': self.timestamp
-                        }
+                    # Criar dataset temporário com coordenadas originais
+                    temp_ds = xr.Dataset(
+                        {var_name: (['y', 'x'], img)},
+                        coords={'x': x_lon, 'y': y_lat}
                     )
                     
-                    # Obter os limiares para esta variável
-                    min_threshold, max_threshold = self.interesting_vars.get(var, (0, 0))
-                    
-                    # Adicionar metadados
-                    ds[var_name].attrs = {
-                        'long_name': var_clean,
-                        'units': unit,
-                        '_FillValue': NODATA_VALUE,
-                        'valid_range': f"{min_threshold}, {max_threshold}",
-                        'interpolation_method': interp_type,
-                        'search_radius_meters': search_radius,
-                        'resolution_meters': hres
-                    }
-                    
-                    datasets.append(ds)
+                    # Re-amostrar para coordenadas desejadas
+                    resampled = temp_ds.interp(x=lons, y=lats)
+                    img_final = resampled[var_name].values
                     
                 except Exception as e:
-                    print(f"- Erro ao interpolar {var}: {e}")
-            
+                    print(f"  • Erro na interpolação MetPy para {var}: {e}")
+                    print(f"  • Tentando método alternativo para {var}")
+                    
+                    try:
+                        # Criar grade com as dimensões exatas especificadas pelo usuário
+                        lon_res, lat_res = self.grid_resolution
+                        lons = np.linspace(self.lon_min, self.lon_max, int((self.lon_max-self.lon_min)/lon_res)+1)
+                        lats = np.linspace(self.lat_min, self.lat_max, int((self.lat_max-self.lat_min)/lat_res)+1)
+                        lon_mesh, lat_mesh = np.meshgrid(lons, lats)
+                        
+                        # Interpolar usando scipy griddata
+                        points = np.column_stack((df_time.Longitude.values[valid_indices], 
+                                                 df_time.Latitude.values[valid_indices]))
+                        img_final = griddata(
+                            points,
+                            valid_values,
+                            (lon_mesh, lat_mesh),
+                            method='linear'
+                        )
+                    except Exception as e2:
+                        print(f"  • Método alternativo também falhou: {e2}")
+                        continue
+                
+                # Preencher grade completa
+                img_final = fullgrid(img_final)
+                
+                # Criar Dataset do xarray
+                ds = xr.Dataset(
+                    {var_name: (['lat', 'lon'], img_final)},
+                    coords={
+                        'lon': lons,
+                        'lat': lats
+                    }
+                )
+                
+                # Adicionar metadados
+                ds[var_name].attrs = {
+                    'long_name': var_clean,
+                    'units': unit,
+                    '_FillValue': NODATA_VALUE,
+                    'valid_range': f"{min_threshold}, {max_threshold}",
+                    'interpolation_method': interp_type
+                }
+                
+                datasets.append(ds)
+                
             except Exception as e:
-                print(f"- Erro ao interpolar {var}: {e}")
+                print(f"  • Erro ao interpolar {var}: {e}")
         
-        # Se não temos datasets, retornar falha
+        # Verificar se temos datasets
         if not datasets:
-            print("- Nenhuma variável foi interpolada com sucesso")
-            return False
+            print("  • Nenhuma variável pôde ser interpolada com sucesso")
+            return False, None
         
         # Mesclar todos os datasets
-        if len(datasets) > 1:
-            # Remapear todos os datasets para as coordenadas do primeiro
-            base_ds = datasets[0]
-            remapped_datasets = [ds if ds is base_ds else remap_to_base(ds, base_ds) for ds in datasets]
-            
-            # Mesclar em um único dataset
-            merged_ds = xr.merge(remapped_datasets)
-        else:
-            merged_ds = datasets[0]
+        merged_ds = xr.merge(datasets)
         
-        # Adicionar atributos globais
-        merged_ds.attrs = {
-            'title': f'UCAR Little-R Surface Observations - {self.timestamp.strftime("%Y-%m-%d %H:%M")}',
-            'source': 'UCAR RDA ds461.0',
-            'creation_date': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'nodata_description': f'Valores {NODATA_VALUE} representam dados ausentes ou fora dos limites válidos',
-            'variables_description': 'Aplicados thresholds conforme definido em interesting_vars',
-            'interpolation_method': interp_type,
-            'author': 'Helvecio Neto (2024) - helecioblneto@gmail.com/github.com/helecioneto'
-        }
+        # CORREÇÃO: Use expand_dims diretamente com a coordenada, não adicione a 
+        # coordenada primeiro e depois expanda
+        time_value = timestamp if timestamp is not None else self.timestamp
         
-        # Substituir NaNs pelo valor NODATA
-        for var in merged_ds.data_vars:
-            merged_ds[var] = merged_ds[var].fillna(NODATA_VALUE)
+        # Adicionar dimensão temporal de uma única vez
+        merged_ds = merged_ds.expand_dims(time=[time_value])
         
-        # Armazenar o resultado
-        self.grid_data = merged_ds
-        
-        return True
+        return True, merged_ds
 
     def save_data(self):
         """Save data in the specified format"""
-        # Create filename base
-        filename_base = f"SURFACE_OBS:{self.timestamp.strftime('%Y%m%d%H')}"
+        # Verificar se temos múltiplos timestamps
+        has_time_dimension = (hasattr(self, 'unique_timestamps') and 
+                              self.unique_timestamps is not None and 
+                              len(self.unique_timestamps) > 1)
+        
+        if has_time_dimension and self.output_type == 'netcdf':
+            # Verificar se temos timestamps para evitar erros
+            try:
+                start_date = min(self.unique_timestamps).strftime('%Y%m%d%H')
+                end_date = max(self.unique_timestamps).strftime('%Y%m%d%H')
+                filename_base = f"SURFACE_OBS:{start_date}_to_{end_date}"
+            except (ValueError, AttributeError):
+                # Em caso de erro, usar o timestamp padrão
+                filename_base = f"SURFACE_OBS:{self.timestamp.strftime('%Y%m%d%H')}"
+        else:
+            # Nome padrão com um único timestamp
+            filename_base = f"SURFACE_OBS:{self.timestamp.strftime('%Y%m%d%H')}"
         
         if self.output_type == 'csv':
             # Save the point data as CSV
@@ -722,8 +873,11 @@ class LittleRProcessor:
         if self.process_data():
             print(f"- Dados processados com sucesso: {len(self.df)} registros")
             
-            # Se estamos gerando NetCDF, precisamos limpar os dados antes da interpolação
+            # Se estamos gerando NetCDF com interpolação, agregamos temporalmente
             if self.output_type == 'netcdf' and self.grid_resolution is not None:
+                # Agregar dados por hora
+                self.aggregate_hourly_data()
+                
                 # Limpar outliers antes de interpolar
                 print("- Limpando outliers para interpolação...")
                 self.clean_data()
@@ -731,7 +885,6 @@ class LittleRProcessor:
                 if self.interpolation_method == 'metpy':
                     # Converter grid_resolution de graus para metros (aproximado no equador)
                     lon_res, lat_res = self.grid_resolution
-                    # 1 grau ≈ 111 km no equador
                     hres = min(lon_res, lat_res) * 111000
                     
                     # Se o usuário escolheu 'metpy' como método, usamos o metpy_interp_type
