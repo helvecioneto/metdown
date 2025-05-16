@@ -25,7 +25,7 @@ A biblioteca oferece múltiplas funcionalidades:
 1. **Clone o repositório**
 
    ```bash
-   git clone https://github.com/helecioblneto/ucar-processing.git
+   git clone https://github.com/helvecioneto/ucar-processing/.git
    cd ucar-processing
    ```
 
