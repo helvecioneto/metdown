@@ -1,8 +1,8 @@
-# SPATIALMET - Biblioteca para Download e Processamento de Dados Meteorológicos UCAR
+# metdown - Biblioteca para Download e Processamento de Dados Meteorológicos
 
 ## Visão Geral
 
-SpatialMet é uma biblioteca Python para download, processamento e visualização de dados meteorológicos de superfície do repositório UCAR (University Corporation for Atmospheric Research) no formato Little-R. 
+´metdown´ é uma biblioteca Python para download, processamento e visualização de dados meteorológicos de superfície do repositório UCAR (University Corporation for Atmospheric Research) no formato Little-R. 
 
 A biblioteca oferece múltiplas funcionalidades:
 
@@ -25,8 +25,8 @@ A biblioteca oferece múltiplas funcionalidades:
 1. **Clone o repositório**
 
    ```bash
-   git clone https://github.com/helvecioneto/ucar-processing/.git
-   cd ucar-processing
+   git clone https://github.com/helvecioneto/metdown/.git
+   cd metdown
    ```
 
 2. **Crie um ambiente virtual (recomendado)**
@@ -50,13 +50,13 @@ A biblioteca pode ser utilizada através da linha de comando após a instalaçã
 **Exemplo básico: Download de dados para o dia 1 de janeiro de 2023, com resolução de 1 grau (aproximadamente 100 km)**
 
 ```bash
-python -m spatialmet -t "2023-01-01 00:00:00" -o ./output -grid 1 1 -file_type netcdf
+python -m metdown -t "2023-01-01 00:00:00" -o ./output -grid 1 1 -file_type netcdf
 ```
 
 **Exemplo com região específica: Recorte geográfico do Brasil e resolução de 0.5 graus (aproximadamente 50 km)**
 
 ```bash
-python -m spatialmet -t "2023-01-01 00:00:00" -o ./output -lat_min -45 -lat_max 13 -lon_min -82 -lon_max -30 -grid 0.5 0.5 -file_type netcdf
+python -m metdown -t "2023-01-01 00:00:00" -o ./output -lat_min -45 -lat_max 13 -lon_min -82 -lon_max -30 -grid 0.5 0.5 -file_type netcdf
 ```
 
 ## Parâmetros Disponíveis
@@ -112,19 +112,19 @@ A biblioteca suporta os seguintes formatos de saída (configurados com `-file_ty
 ### Interpolação com MetPy e alta resolução (0.1 graus, aproximadamente 10 km) com método RBF usando função multiquadric para interpolação e raio de 50 km
 
 ```bash
-python -m spatialmet -t "2023-07-15 12:00:00" -o ./output -lat_min -10 -lat_max 10 -lon_min -70 -lon_max -45 -grid 0.1 0.1 -file_type netcdf -i metpy --metpy-interp rbf --metpy-radius 50000 --rbf-func multiquadric
+python -m metdown -t "2023-07-15 12:00:00" -o ./output -lat_min -10 -lat_max 10 -lon_min -70 -lon_max -45 -grid 0.1 0.1 -file_type netcdf -i metpy --metpy-interp rbf --metpy-radius 50000 --rbf-func multiquadric
 ```
 
 ### Download de dados para região específica do Brasil
 
 ```bash
-python -m spatialmet -t "2023-01-01 00:00:00" -o ./output -lat_min -45 -lat_max 13 -lon_min -82 -lon_max -30 -file_type gpkg
+python -m metdown -t "2023-01-01 00:00:00" -o ./output -lat_min -45 -lat_max 13 -lon_min -82 -lon_max -30 -file_type gpkg
 ```
 
 ### Criação de arquivo shapefile para uso em SIG
 
 ```bash
-python -m spatialmet -t "2023-01-01 00:00:00" -o ./output -lat_min -45 -lat_max 13 -lon_min -82 -lon_max -30 -file_type shapefile
+python -m metdown -t "2023-01-01 00:00:00" -o ./output -lat_min -45 -lat_max 13 -lon_min -82 -lon_max -30 -file_type shapefile
 ```
 
 ## Processamento em Lote
@@ -135,14 +135,14 @@ Para processar vários horários sequencialmente:
 ```bash
 #!/bin/bash
 for hour in 00 06 12 18; do
-    python -m spatialmet -t "2023-01-01 $hour:00:00" -o ./output -grid 0.5 0.5 -file_type netcdf
+    python -m metdown -t "2023-01-01 $hour:00:00" -o ./output -grid 0.5 0.5 -file_type netcdf
 done
 ```
 
 **PowerShell:**
 ```powershell
 @("00", "06", "12", "18") | ForEach-Object {
-    python -m spatialmet -t "2023-01-01 $_:00:00" -o ./output -grid 0.5 0.5 -file_type netcdf
+    python -m metdown -t "2023-01-01 $_:00:00" -o ./output -grid 0.5 0.5 -file_type netcdf
 }
 ```
 
@@ -261,7 +261,7 @@ Os dados processados pela biblioteca podem ser facilmente utilizados em:
 ## Citação e Atribuição
 
 ```
-Neto, H. (2024). SpatialMet: Processamento de Dados Little-R da UCAR.
+Neto, H. (2024). metdown: Processamento de Dados Little-R da UCAR.
 Email: helecioblneto@gmail.com
 ```
 
@@ -276,11 +276,11 @@ Helvecio Neto - helecioblneto@gmail.com
 
 helvecioneto: Escreva isso no arquivo README.md
 
-GitHub Copilot: # SPATIALMET - Biblioteca para Download e Processamento de Dados Meteorológicos UCAR
+GitHub Copilot: # metdown - Biblioteca para Download e Processamento de Dados Meteorológicos UCAR
 
 ## Visão Geral
 
-SpatialMet é uma biblioteca Python para download, processamento e visualização de dados meteorológicos de superfície do repositório UCAR (University Corporation for Atmospheric Research) no formato Little-R. 
+metdown é uma biblioteca Python para download, processamento e visualização de dados meteorológicos de superfície do repositório UCAR (University Corporation for Atmospheric Research) no formato Little-R. 
 
 A biblioteca oferece múltiplas funcionalidades:
 
@@ -333,13 +333,13 @@ A biblioteca pode ser utilizada através da linha de comando após a instalaçã
 **Exemplo básico: Dados globais com resolução de 1 grau (aproximadamente 100 km) em formato NetCDF**
 
 ```bash
-python -m spatialmet -t "2023-01-01 00:00:00" -o ./output -grid 1 1 -file_type netcdf
+python -m metdown -t "2023-01-01 00:00:00" -o ./output -grid 1 1 -file_type netcdf
 ```
 
 **Exemplo com região específica: Recorte geográfico do Brasil e resolução de 0.5 graus (aproximadamente 50 km)**
 
 ```bash
-python -m spatialmet -t "2023-01-01 00:00:00" -o ./output -lat_min -10 -lat_max 10 -lon_min -70 -lon_max -45 -grid 0.5 0.5 -file_type netcdf
+python -m metdown -t "2023-01-01 00:00:00" -o ./output -lat_min -10 -lat_max 10 -lon_min -70 -lon_max -45 -grid 0.5 0.5 -file_type netcdf
 ```
 
 ## Parâmetros Disponíveis
@@ -395,19 +395,19 @@ A biblioteca suporta os seguintes formatos de saída (configurados com `-file_ty
 ### Interpolação com MetPy com resolução de 1 grau (aproximadamente 100 km)
 
 ```bash
-python -m spatialmet -t "2023-07-15 12:00:00" -o ./output -lat_min -30 -lat_max 0 -lon_min -60 -lon_max -40 -grid 1 1 -file_type netcdf -i metpy --metpy-interp rbf --metpy-radius 50000 --rbf-func multiquadric
+python -m metdown -t "2023-07-15 12:00:00" -o ./output -lat_min -30 -lat_max 0 -lon_min -60 -lon_max -40 -grid 1 1 -file_type netcdf -i metpy --metpy-interp rbf --metpy-radius 50000 --rbf-func multiquadric
 ```
 
 ### Download de dados para região específica do Brasil com resolução de 0.5 graus (aproximadamente 50 km)
 
 ```bash
-python -m spatialmet -t "2023-01-01 00:00:00" -o ./output -lat_min -23.5 -lat_max -20 -lon_min -47 -lon_max -43 -grid 0.5 0.5 -file_type gpkg
+python -m metdown -t "2023-01-01 00:00:00" -o ./output -lat_min -23.5 -lat_max -20 -lon_min -47 -lon_max -43 -grid 0.5 0.5 -file_type gpkg
 ```
 
 ### Criação de arquivo shapefile para uso em SIG (formatos disponíveis: geojson, gpkg, shapefile)
 
 ```bash
-python -m spatialmet -t "2023-01-01 00:00:00" -o ./output -lat_min -30 -lat_max 5 -lon_min -75 -lon_max -30 -file_type gpkg
+python -m metdown -t "2023-01-01 00:00:00" -o ./output -lat_min -30 -lat_max 5 -lon_min -75 -lon_max -30 -file_type gpkg
 ```
 
 ## Processamento em Lote
@@ -418,14 +418,14 @@ Para processar vários horários sequencialmente:
 ```bash
 #!/bin/bash
 for hour in 00 06 12 18; do
-    python -m spatialmet -t "2023-01-01 $hour:00:00" -o ./output -grid 1 1 -file_type netcdf
+    python -m metdown -t "2023-01-01 $hour:00:00" -o ./output -grid 1 1 -file_type netcdf
 done
 ```
 
 **PowerShell:**
 ```powershell
 @("00", "06", "12", "18") | ForEach-Object {
-    python -m spatialmet -t "2023-01-01 $_:00:00" -o ./output -grid 1 1 -file_type netcdf
+    python -m metdown -t "2023-01-01 $_:00:00" -o ./output -grid 1 1 -file_type netcdf
 }
 ```
 
@@ -544,7 +544,7 @@ Os dados processados pela biblioteca podem ser facilmente utilizados em:
 ## Citação e Atribuição
 
 ```
-Neto, H. (2024). SpatialMet: Processamento de Dados Little-R da UCAR.
+Neto, H. (2024). metdown: Processamento de Dados Little-R da UCAR.
 Email: helecioblneto@gmail.com
 ```
 
