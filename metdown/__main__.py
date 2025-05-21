@@ -1057,12 +1057,12 @@ if __name__ == '__main__':
                       help='Tipo de saída: csv/geojson/gpkg/shapefile (pontos originais) ou netcdf (grade espacial)')
     
     parser.add_argument('-i', '--interpolation', dest='interpolation', type=str,
-                      choices=['linear', 'cubic', 'nearest', 'metpy'], default='linear',
+                      choices=['linear', 'cubic', 'nearest', 'metpy'], default='metpy',
                       help='Método de interpolação (padrão: linear)')
     
     # Argumentos específicos do MetPy
     parser.add_argument('--metpy-interp', dest='metpy_interp_type', type=str,
-                      choices=['rbf', 'cressman', 'barnes', 'natural_neighbor', 'linear'], default='rbf',
+                      choices=['rbf', 'cressman', 'barnes', 'natural_neighbor', 'linear'], default='cressman',
                       help='Tipo de interpolação MetPy (padrão: rbf)')
     
     parser.add_argument('--metpy-radius', dest='metpy_search_radius', type=float, default=100000,
