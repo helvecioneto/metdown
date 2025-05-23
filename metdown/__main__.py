@@ -113,10 +113,21 @@ def parse_variable_name(var):
     return var_clean, unit, var_name
 
 def create_grid_coordinates(lon_min, lon_max, lat_min, lat_max, resolution):
-    """Cria coordenadas de grade"""
+    """Cria coordenadas de grade centralizadas nos pixels"""
     lon_res, lat_res = resolution
-    lons = np.linspace(lon_min, lon_max, int((lon_max-lon_min)/lon_res)+1)
-    lats = np.linspace(lat_min, lat_max, int((lat_max-lat_min)/lat_res)+1)
+    
+    # Calcular o número de células na grade
+    num_lon = int(round((lon_max - lon_min) / lon_res))
+    num_lat = int(round((lat_max - lat_min) / lat_res))
+    
+    # Calcular os limites ajustados (para manter a região original)
+    lon_edge_max = lon_min + (num_lon * lon_res)
+    lat_edge_max = lat_min + (num_lat * lat_res)
+    
+    # Criar coordenadas centradas nos pixels
+    lons = np.linspace(lon_min + lon_res/2, lon_edge_max - lon_res/2, num_lon)
+    lats = np.linspace(lat_min + lat_res/2, lat_edge_max - lat_res/2, num_lat)
+    
     return lons, lats
 
 def get_utm_boundaries(lon_min, lon_max, lat_min, lat_max):
