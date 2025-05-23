@@ -479,9 +479,8 @@ def try_metpy_interpolation(var_name, var_clean, unit, valid_x, valid_y, valid_v
             rbf_func=rbf_func,
             rbf_smooth=rbf_smooth
         )
-        
         # Criar máscara para pontos muito distantes de observações
-        if minimum_neighbors == 0:
+        if minimum_neighbors == 0 and search_radius > 0 and interp_type != 'rbf':
             # Criar grade de distâncias (para cada ponto da grade, calcular distância até a observação mais próxima)
             dist_grid = np.zeros_like(img)
             
