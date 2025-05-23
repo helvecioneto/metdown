@@ -8,6 +8,11 @@ __pycache__/
 
 output*/
 *.nc
+*.txt
+*.csv
+*.GeoJSON
+*.shapefile
+*.gpkg
 
 # Distribution / packaging
 .Python

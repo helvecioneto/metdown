@@ -174,28 +174,6 @@ def proc_row(row, sizes):
         
     return proc_row
 
-# def convert_numeric_columns(df):
-#     """Converte todas as colunas possíveis para formato numérico, tratando valores especiais."""
-#     # Valores que representam dados ausentes/inválidos em formatos meteorológicos
-#     missing_values = [
-#         '-888888.00000', '888888.00000', '-999999', '999999', 
-#         '-99999', '99999', '-888888', '888888'
-#     ]
-    
-#     for col in df.columns:
-#         try:
-#             # Substituir valores conhecidos por NaN antes da conversão
-#             if df[col].dtype == 'object':  # Apenas para colunas de texto
-#                 for missing_val in missing_values:
-#                     df[col] = df[col].replace(missing_val, np.nan)
-        
-#             # Converter para numérico
-#             df[col] = pd.to_numeric(df[col], errors='coerce')
-#         except:
-#             pass
-    
-#     return df
-
 def create_datetime_columns(df):
     """Cria colunas datetime a partir da coluna Date."""
     if 'Date' in df.columns:
@@ -210,8 +188,8 @@ def create_datetime_columns(df):
             # Adicionar coluna para hora truncada (arredondada para a hora exata)
             df['datetime_hour'] = df['datetime'].dt.floor('H')
             
-            print(f"- Coluna 'datetime' criada ({df['datetime'].nunique()} timestamps únicos)")
-            print(f"- Coluna 'datetime_hour' criada ({df['datetime_hour'].nunique()} horas únicas)")
+            # print(f"- Coluna 'datetime' criada ({df['datetime'].nunique()} timestamps únicos)")
+            # print(f"- Coluna 'datetime_hour' criada ({df['datetime_hour'].nunique()} horas únicas)")
         except Exception as e:
             print(f"- Erro ao converter coluna Date para datetime: {e}")
     
@@ -229,7 +207,7 @@ def apply_geo_filter(df, lon_min, lon_max, lat_min, lat_max):
 
 def clean_data(df):
     """Limpa os dados, removendo outliers e valores problemáticos."""
-    print("- Limpando dados e removendo outliers")
+    # print("- Limpando dados e removendo outliers")
     
     for var in INTERESTING_VARS.keys():
         if var not in df.columns:
@@ -515,10 +493,6 @@ def interpolate_metpy_single_time(df_time, interp_type, minimum_neighbors,
     min_x, max_x, min_y, max_y = get_utm_boundaries(
         lon_min, lon_max, lat_min, lat_max
     )
-    
-    # Calcular dimensões da grade
-    x_size = max(int(np.ceil((max_x - min_x) / hres)), 10)
-    y_size = max(int(np.ceil((max_y - min_y) / hres)), 10)
     
     # Converter pontos para UTM
     gdf_utm = points_to_utm(df_time)
@@ -868,7 +842,7 @@ def save_data(hourly_groups, grid_data, timestamp, unique_timestamps, output_dir
     if output_type == 'netcdf' and grid_data is not None:
         # Verificar se temos dimensão temporal no dataset
         if 'time' in grid_data.dims and len(grid_data.time) > 1:
-            print(f"- Salvando {len(grid_data.time)} arquivos NetCDF (um por horário)")
+            # print(f"- Salvando {len(grid_data.time)} arquivos NetCDF (um por horário)")
             
             # Para cada timestamp no dataset
             for time_value in grid_data.time.values:
@@ -987,7 +961,7 @@ def process_and_save(timestamp, output_dir="./output",
     has_hour_groups = 'datetime_hour' in df.columns and df['datetime_hour'].nunique() > 0
     
     if has_hour_groups:
-        print(f"- Agrupando por hora ({df['datetime_hour'].nunique()} grupos)")
+        # print(f"- Agrupando por hora ({df['datetime_hour'].nunique()} grupos)")
         hourly_groups = [(hour, group) for hour, group in df.groupby('datetime_hour')]
     else:
         # Sem agrupamento - tratar como um único grupo
@@ -1000,7 +974,7 @@ def process_and_save(timestamp, output_dir="./output",
     # Para NetCDF, interpolar cada grupo individualmente
     if output_type == 'netcdf' and grid_resolution is not None:
     
-        print("- Realizando interpolação para cada grupo de hora")
+        # print("- Realizando interpolação para cada grupo de hora")
         
         
         # Para cada grupo temporal, criar um arquivo NetCDF separado
@@ -1023,7 +997,7 @@ def process_and_save(timestamp, output_dir="./output",
             file_base = f"SURFACE_OBS_{file_datetime}0000"
             time_str = time_value.strftime('%Y-%m-%d %H:00')
             
-            print(f"- Processando interpolação para {time_str} ({len(group)} registros)")
+            # print(f"- Processando interpolação para {time_str} ({len(group)} registros)")
             
             # Lista para armazenar datasets para cada variável
             datasets = []
@@ -1076,7 +1050,7 @@ def process_and_save(timestamp, output_dir="./output",
             # Salvar arquivo NetCDF para esta hora
             netcdf_path = output_dir / f"{file_base}.nc"
             hour_grid.to_netcdf(netcdf_path)
-            print(f"- Dados interpolados para {time_str} salvos em NetCDF: {netcdf_path}")
+            # print(f"- Dados interpolados para {time_str} salvos em NetCDF: {netcdf_path}")
             
             # Acumular em grid_data para compatibilidade
             if grid_data is None:
@@ -1152,8 +1126,8 @@ if __name__ == '__main__':
                       choices=['rbf', 'cressman', 'barnes', 'natural_neighbor', 'linear'], default='cressman',
                       help='Tipo de interpolação MetPy (padrão: rbf)')
     
-    parser.add_argument('--metpy-radius', dest='metpy_search_radius', type=float, default=100000,
-                      help='Raio de busca em metros para interpolação MetPy (padrão: 100000)')
+    parser.add_argument('--metpy-radius', dest='metpy_search_radius', type=float, default=300000,
+                      help='Raio de busca em metros para interpolação MetPy (padrão: 300000)')
     
     parser.add_argument('--metpy-neighbors', dest='metpy_min_neighbors', type=int, default=1,
                       help='Número mínimo de vizinhos para interpolação MetPy (padrão: 1)')
