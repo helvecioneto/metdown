@@ -12,6 +12,7 @@ from tqdm import tqdm
 import xarray as xr
 from scipy.interpolate import griddata
 import warnings
+import cartopy.crs as ccrs
 warnings.filterwarnings("ignore")
 
 # Configurar ambiente
@@ -113,48 +114,48 @@ def parse_variable_name(var):
     return var_clean, unit, var_name
 
 def create_grid_coordinates(lon_min, lon_max, lat_min, lat_max, resolution):
-    """Cria coordenadas de grade centralizadas nos pixels"""
+    """Cria coordenadas de grade"""
     lon_res, lat_res = resolution
-    
-    # Calcular o número de células na grade
-    num_lon = int(round((lon_max - lon_min) / lon_res))
-    num_lat = int(round((lat_max - lat_min) / lat_res))
-    
-    # Calcular os limites ajustados (para manter a região original)
-    lon_edge_max = lon_min + (num_lon * lon_res)
-    lat_edge_max = lat_min + (num_lat * lat_res)
-    
-    # Criar coordenadas centradas nos pixels
-    lons = np.linspace(lon_min + lon_res/2, lon_edge_max - lon_res/2, num_lon)
-    lats = np.linspace(lat_min + lat_res/2, lat_edge_max - lat_res/2, num_lat)
-    
+    lons = np.linspace(lon_min, lon_max, int((lon_max-lon_min)/lon_res)+1)
+    lats = np.linspace(lat_min, lat_max, int((lat_max-lat_min)/lat_res)+1)
     return lons, lats
 
 def get_utm_boundaries(lon_min, lon_max, lat_min, lat_max):
-    """Obtém limites UTM a partir de coordenadas geográficas"""
-    bbox_points = [
-        Point(lon_min, lat_min),
-        Point(lon_max, lat_max)
-    ]
-    bbox_gdf = gpd.GeoDataFrame(geometry=bbox_points, crs="EPSG:4326")
-    bbox_utm = bbox_gdf.to_crs("EPSG:3857")
+    """Obtém limites em projeção Albers Equal Area."""
+    # Calcular centro da região para otimizar a projeção
+    central_lon = (lon_min + lon_max) / 2
+    central_lat = (lat_min + lat_max) / 2
     
-    min_x = bbox_utm.geometry[0].x
-    min_y = bbox_utm.geometry[0].y
-    max_x = bbox_utm.geometry[1].x
-    max_y = bbox_utm.geometry[1].y
+    # Definir projeções
+    from_proj = ccrs.Geodetic()
+    to_proj = ccrs.AlbersEqualArea(central_longitude=central_lon, 
+                                   central_latitude=central_lat)
     
-    return min_x, max_x, min_y, max_y
+    # Transformar pontos
+    transformer = to_proj.transform_points(from_proj, 
+                                          np.array([lon_min, lon_max]), 
+                                          np.array([lat_min, lat_max]))
+    
+    min_x, min_y = transformer[0, 0], transformer[0, 1]
+    max_x, max_y = transformer[1, 0], transformer[1, 1]
+    
+    return min_x, max_x, min_y, max_y, central_lon, central_lat
 
-def points_to_utm(df):
-    """Converte pontos para UTM"""
+def points_to_utm(df, central_lon, central_lat):
+    """Converte pontos para projeção Albers Equal Area."""
+    # Criar GeoPandas DataFrame
     gdf = gpd.GeoDataFrame(
         df, 
         geometry=gpd.points_from_xy(df.Longitude, df.Latitude),
         crs="EPSG:4326"
     )
-    return gdf.to_crs("EPSG:3857")
-
+    
+    # Definir projeção Albers customizada
+    custom_proj = f"+proj=aea +lat_1={central_lat} +lat_2={central_lat} +lat_0={central_lat} +lon_0={central_lon}"
+    
+    # Converter para projeção customizada
+    return gdf.to_crs(custom_proj)
+    
 def download_file(url):
     """Baixa arquivo da URL com barra de progresso."""
     response = requests.head(url)
@@ -356,7 +357,8 @@ def apply_variable_limits(data_array, var_name):
 
 def resample_to_geographic(gx, gy, img, var_name, var_clean, unit, 
                            min_threshold, max_threshold, interp_type,
-                           lon_min, lon_max, lat_min, lat_max, grid_resolution):
+                           lon_min, lon_max, lat_min, lat_max, grid_resolution,
+                           central_lon, central_lat):  # Adicionar estes parâmetros
     """Reamostra dados de UTM para coordenadas geográficas."""
     # Criar grade geográfica
     lon_grid, lat_grid = create_grid_coordinates(
@@ -365,10 +367,12 @@ def resample_to_geographic(gx, gy, img, var_name, var_clean, unit,
     
     # Converter coordenadas UTM para geográficas
     gx_gdf = gpd.GeoDataFrame(
-        geometry=[Point(x, 0) for x in gx[0]], crs="EPSG:3857"
+        geometry=[Point(x, 0) for x in gx[0]], 
+        crs=f"+proj=aea +lat_1={central_lat} +lat_2={central_lat} +lat_0={central_lat} +lon_0={central_lon}"
     ).to_crs("EPSG:4326")
     gy_gdf = gpd.GeoDataFrame(
-        geometry=[Point(0, y) for y in gy[:, 0]], crs="EPSG:3857"
+        geometry=[Point(0, y) for y in gy[:, 0]], 
+        crs=f"+proj=aea +lat_1={central_lat} +lat_2={central_lat} +lat_0={central_lat} +lon_0={central_lon}"
     ).to_crs("EPSG:4326")
     
     x_lon = np.array([p.x for p in gx_gdf.geometry])
@@ -464,7 +468,7 @@ def try_metpy_interpolation(var_name, var_clean, unit, valid_x, valid_y, valid_v
                           interp_type, hres, minimum_neighbors, search_radius, gamma, kappa_star,
                           min_threshold, max_threshold, df_time, valid_indices,
                           lon_min, lon_max, lat_min, lat_max, grid_resolution,
-                          rbf_func, rbf_smooth):
+                          rbf_func, rbf_smooth, central_lon, central_lat):  # Adicionar estes parâmetros
     """Tenta interpolar usando MetPy, com fallback para scipy."""
     try:
         # Usar MetPy para interpolação
@@ -479,6 +483,7 @@ def try_metpy_interpolation(var_name, var_clean, unit, valid_x, valid_y, valid_v
             rbf_func=rbf_func,
             rbf_smooth=rbf_smooth
         )
+        
         # Criar máscara para pontos muito distantes de observações
         if minimum_neighbors == 0 and search_radius > 0 and interp_type != 'rbf':
             # Criar grade de distâncias (para cada ponto da grade, calcular distância até a observação mais próxima)
@@ -499,11 +504,12 @@ def try_metpy_interpolation(var_name, var_clean, unit, valid_x, valid_y, valid_v
             # Marcar como NaN os pontos que estão muito longe de qualquer observação
             img[dist_grid > search_radius * 0.75] = np.nan
         
-        # Reamostrar para coordenadas geográficas
+        # Reamostrar para coordenadas geográficas, passando os parâmetros
         return resample_to_geographic(
             gx, gy, img, var_name, var_clean, unit, 
             min_threshold, max_threshold, interp_type,
-            lon_min, lon_max, lat_min, lat_max, grid_resolution
+            lon_min, lon_max, lat_min, lat_max, grid_resolution,
+            central_lon, central_lat  # Adicionar estes parâmetros
         )
         
     except Exception as e:
@@ -531,12 +537,12 @@ def interpolate_metpy_single_time(df_time, interp_type, minimum_neighbors,
                  not col.endswith('-QC') and col not in ['Longitude', 'Latitude', 'hour', 'datetime']]
     
     # Obter limites UTM
-    min_x, max_x, min_y, max_y = get_utm_boundaries(
+    min_x, max_x, min_y, max_y, central_lon, central_lat = get_utm_boundaries(
         lon_min, lon_max, lat_min, lat_max
     )
     
     # Converter pontos para UTM
-    gdf_utm = points_to_utm(df_time)
+    gdf_utm = points_to_utm(df_time, central_lon, central_lat)
     x = np.array([point.x for point in gdf_utm.geometry])
     y = np.array([point.y for point in gdf_utm.geometry])
     
@@ -572,7 +578,7 @@ def interpolate_metpy_single_time(df_time, interp_type, minimum_neighbors,
                 interp_type, hres, minimum_neighbors, search_radius, gamma, kappa_star,
                 min_threshold, max_threshold, df_time, valid_indices,
                 lon_min, lon_max, lat_min, lat_max, grid_resolution,
-                rbf_func, rbf_smooth
+                rbf_func, rbf_smooth, central_lon, central_lat
             )
             
             if ds is not None:
@@ -1152,7 +1158,7 @@ if __name__ == '__main__':
     # Argumentos de processamento e saída
     parser.add_argument('-grid', '--grid_resolution', dest='grid_resolution', type=float, nargs=2,
                       help='Resolução da grade [lon_res lat_res] em graus (padrão: 1.0 1.0)',
-                      default=(1.0, 1.0))
+                      default=(0.5, 0.5))
     
     parser.add_argument('-file_type', dest='output_type', type=str,
                       choices=['csv', 'netcdf', 'geojson', 'gpkg', 'shapefile'], default='csv',
