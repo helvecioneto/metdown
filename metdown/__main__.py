@@ -70,22 +70,25 @@ DATA_SIZES = [13,7,13,7,13,7,13,7,13,7,13,7,13,7,13,7,13,7,13,7]
 
 # Limiares para variáveis de interesse
 INTERESTING_VARS = {
-    'Precip': (0, 1000),
-    'Pressure (Pa)': (0, 100000),
-    'Height (m)': (0, 5000),
-    'Temperature (K)': (270, 300),
-    'Dew point (K)': (0, 400),
-    'Wind speed (m/s)': (0, 100),
-    'Wind direction (deg)': (0, 360),
-    'Wind U (m/s)': (-100, 100),
-    'Wind V (m/s)': (-100, 100),
-    'Relative humidity (%)': (0, 100),
-    'Thickness (m)': (0, 10000)
+    'Precip': (0, 500),                 # Máximo reduzido: 500mm é mais realista para precipitação extrema
+    'Pressure (Pa)': (85000, 108000),   # Ajustado para intervalo realista de pressão atmosférica ao nível do mar
+    'Height (m)': (0, 9000),            # Ampliado para incluir altas montanhas (até ~9000m)
+    'Temperature (K)': (180, 330),      # Ampliado para -93°C a 57°C (extremos climáticos globais)
+    'Dew point (K)': (180, 310),        # Ajustado para intervalo fisicamente possível
+    'Wind speed (m/s)': (0, 120),       # Ajustado para incluir ventos extremos (ciclones)
+    'Wind direction (deg)': (0, 360),   # Mantido (correto)
+    'Wind U (m/s)': (-120, 120),        # Ampliado para ser consistente com Wind speed
+    'Wind V (m/s)': (-120, 120),        # Ampliado para ser consistente com Wind speed
+    'Relative humidity (%)': (0, 100),  # Mantido (correto)
+    'Thickness (m)': (0, 10000)         # Mantido (parece adequado)
 }
 
 # Funções utilitárias
-def fullgrid(grid):
-    """Preenche uma grade com NaNs nas bordas"""
+def fullgrid(grid, apply_fill=False):
+    """Preenche uma grade com NaNs nas bordas apenas se solicitado"""
+    if not apply_fill:
+        return grid  # Não aplica preenchimento
+        
     mask = np.isnan(grid)
     if not np.any(mask):
         return grid
@@ -322,13 +325,21 @@ def process_data(timestamp, lon_min, lon_max, lat_min, lat_max):
     return df
 
 def apply_variable_limits(data_array, var_name):
-    """Aplica limites mínimos e máximos aos dados interpolados."""
+    """Aplica limites mínimos e máximos aos dados interpolados preservando NaN."""
     for orig_var, limits in INTERESTING_VARS.items():
         _, _, std_var = parse_variable_name(orig_var)
         if var_name == std_var:
             min_val, max_val = limits
-            # Aplicar limites usando numpy clip
+            
+            # Preservar máscara de NaN/NoData antes de aplicar os limites
+            nan_mask = np.isnan(data_array) | (data_array == NODATA_VALUE)
+            
+            # Aplicar limites apenas aos valores válidos
             data_array = np.clip(data_array, min_val, max_val)
+            
+            # Restaurar NaN/NoData nos locais originais
+            data_array[nan_mask] = np.nan
+            
             break
     return data_array
 
@@ -362,8 +373,8 @@ def resample_to_geographic(gx, gy, img, var_name, var_clean, unit,
     resampled = temp_ds.interp(x=lon_grid, y=lat_grid)
     img_final = resampled[var_name].values
     
-    # Preencher grade
-    img_final = fullgrid(img_final)
+    # NÃO preencher grade - manter NaN onde não há dados suficientes
+    # img_final = fullgrid(img_final)  # Comente ou remova esta linha
     
     # Aplicar limites definidos em interesting_vars
     img_final = apply_variable_limits(img_final, var_name)
@@ -457,6 +468,26 @@ def try_metpy_interpolation(var_name, var_clean, unit, valid_x, valid_y, valid_v
             rbf_func=rbf_func,
             rbf_smooth=rbf_smooth
         )
+        
+        # Criar máscara para pontos muito distantes de observações
+        if minimum_neighbors == 0:
+            # Criar grade de distâncias (para cada ponto da grade, calcular distância até a observação mais próxima)
+            dist_grid = np.zeros_like(img)
+            
+            # Para cada ponto na grade, calcular distância até o ponto observado mais próximo
+            for i in range(img.shape[0]):
+                for j in range(img.shape[1]):
+                    # Posição do ponto na grade
+                    px, py = gx[i,j], gy[i,j]
+                    
+                    # Calcular distâncias a todos os pontos observados
+                    dists = np.sqrt((valid_x - px)**2 + (valid_y - py)**2)
+                    
+                    # Salvar distância mínima
+                    dist_grid[i,j] = np.min(dists)
+            
+            # Marcar como NaN os pontos que estão muito longe de qualquer observação
+            img[dist_grid > search_radius * 0.75] = np.nan
         
         # Reamostrar para coordenadas geográficas
         return resample_to_geographic(
@@ -1129,8 +1160,8 @@ if __name__ == '__main__':
     parser.add_argument('--metpy-radius', dest='metpy_search_radius', type=float, default=300000,
                       help='Raio de busca em metros para interpolação MetPy (padrão: 300000)')
     
-    parser.add_argument('--metpy-neighbors', dest='metpy_min_neighbors', type=int, default=1,
-                      help='Número mínimo de vizinhos para interpolação MetPy (padrão: 1)')
+    parser.add_argument('--metpy-neighbors', dest='metpy_min_neighbors', type=int, default=0,
+                      help='Número mínimo de vizinhos para interpolação MetPy (padrão: 0)')
     
     parser.add_argument('--metpy-gamma', dest='metpy_gamma', type=float, default=0.25,
                       help='Parâmetro gamma para interpolação Barnes (padrão: 0.25)')
