@@ -114,10 +114,21 @@ def parse_variable_name(var):
     return var_clean, unit, var_name
 
 def create_grid_coordinates(lon_min, lon_max, lat_min, lat_max, resolution):
-    """Cria coordenadas de grade"""
+    """Cria coordenadas de grade com precisão exata."""
     lon_res, lat_res = resolution
-    lons = np.linspace(lon_min, lon_max, int((lon_max-lon_min)/lon_res)+1)
-    lats = np.linspace(lat_min, lat_max, int((lat_max-lat_min)/lat_res)+1)
+    
+    # Calcular número de pontos para garantir que os limites sejam exatos
+    n_lon = int(round((lon_max - lon_min) / lon_res)) + 1
+    n_lat = int(round((lat_max - lat_min) / lat_res)) + 1
+    
+    # Criar coordenadas com espaçamento exato
+    lons = np.linspace(lon_min, lon_max, n_lon)
+    lats = np.linspace(lat_min, lat_max, n_lat)
+    
+    # Garantir que os valores finais sejam exatamente os limites especificados
+    lons[-1] = lon_max
+    lats[-1] = lat_max
+    
     return lons, lats
 
 def get_utm_boundaries(lon_min, lon_max, lat_min, lat_max):
@@ -336,78 +347,115 @@ def process_data(timestamp, lon_min, lon_max, lat_min, lat_max):
     
     return df
 
-def apply_variable_limits(data_array, var_name):
-    """Aplica limites mínimos e máximos aos dados interpolados preservando NaN."""
+def get_variable_nodata_value(var_name):
+    """Obtém valor NoData apropriado baseado no limite mínimo da variável."""
+    for orig_var, limits in INTERESTING_VARS.items():
+        _, _, std_var = parse_variable_name(orig_var)
+        if var_name == std_var:
+            min_val, max_val = limits
+            # Usar um valor abaixo do mínimo como NoData
+            return min_val - abs(min_val * 0.1) - 1
+    
+    # Valor padrão se não encontrar a variável
+    return NODATA_VALUE
+
+def apply_variable_limits_with_nodata(data_array, var_name):
+    """Aplica limites e substitui valores fora do intervalo pelo NoData da variável."""
+    nodata_value = get_variable_nodata_value(var_name)
+    
     for orig_var, limits in INTERESTING_VARS.items():
         _, _, std_var = parse_variable_name(orig_var)
         if var_name == std_var:
             min_val, max_val = limits
             
-            # Preservar máscara de NaN/NoData antes de aplicar os limites
-            nan_mask = np.isnan(data_array) | (data_array == NODATA_VALUE)
+            # Substituir valores fora dos limites pelo valor NoData específico
+            mask_below = data_array < min_val
+            mask_above = data_array > max_val
+            mask_nan = np.isnan(data_array)
             
-            # Aplicar limites apenas aos valores válidos
-            data_array = np.clip(data_array, min_val, max_val)
-            
-            # Restaurar NaN/NoData nos locais originais
-            data_array[nan_mask] = np.nan
+            # Aplicar NoData para valores fora dos limites
+            data_array[mask_below | mask_above | mask_nan] = nodata_value
             
             break
+    
     return data_array
 
 def resample_to_geographic(gx, gy, img, var_name, var_clean, unit, 
                            min_threshold, max_threshold, interp_type,
                            lon_min, lon_max, lat_min, lat_max, grid_resolution,
-                           central_lon, central_lat):  # Adicionar estes parâmetros
-    """Reamostra dados de UTM para coordenadas geográficas."""
+                           central_lon, central_lat):
+    """Reamostra dados com valor NoData específico da variável."""
+    
+    # Obter valor NoData específico
+    nodata_value = get_variable_nodata_value(var_name)
+    
     # Criar grade geográfica
     lon_grid, lat_grid = create_grid_coordinates(
         lon_min, lon_max, lat_min, lat_max, grid_resolution
     )
     
-    # Converter coordenadas UTM para geográficas
-    gx_gdf = gpd.GeoDataFrame(
-        geometry=[Point(x, 0) for x in gx[0]], 
-        crs=f"+proj=aea +lat_1={central_lat} +lat_2={central_lat} +lat_0={central_lat} +lon_0={central_lon}"
-    ).to_crs("EPSG:4326")
-    gy_gdf = gpd.GeoDataFrame(
-        geometry=[Point(0, y) for y in gy[:, 0]], 
-        crs=f"+proj=aea +lat_1={central_lat} +lat_2={central_lat} +lat_0={central_lat} +lon_0={central_lon}"
-    ).to_crs("EPSG:4326")
+    lon_mesh, lat_mesh = np.meshgrid(lon_grid, lat_grid)
     
-    x_lon = np.array([p.x for p in gx_gdf.geometry])
-    y_lat = np.array([p.y for p in gy_gdf.geometry])
+    # Identificar valores válidos (não são NoData)
+    valid_mask = (img != nodata_value) & ~np.isnan(img)
+    valid_indices = np.where(valid_mask)
     
-    # Criar dataset temporário
-    temp_ds = xr.Dataset(
-        {var_name: (['y', 'x'], img)},
-        coords={'x': x_lon, 'y': y_lat}
-    )
+    if len(valid_indices[0]) == 0:
+        # Se não há dados válidos, preencher com NoData
+        img_final = np.full((len(lat_grid), len(lon_grid)), nodata_value)
+    else:
+        # Converter coordenadas válidas
+        valid_gx = gx[valid_indices]
+        valid_gy = gy[valid_indices]
+        valid_img = img[valid_indices]
+        
+        # Transformar coordenadas
+        valid_points = gpd.GeoDataFrame(
+            geometry=[Point(x, y) for x, y in zip(valid_gx, valid_gy)],
+            crs=f"+proj=aea +lat_1={central_lat} +lat_2={central_lat} +lat_0={central_lat} +lon_0={central_lon}"
+        ).to_crs("EPSG:4326")
+        
+        transformed_lons = np.array([p.x for p in valid_points.geometry])
+        transformed_lats = np.array([p.y for p in valid_points.geometry])
+        
+        # Interpolar para grade final
+        points = np.column_stack((transformed_lons, transformed_lats))
+        img_final = griddata(
+            points, 
+            valid_img, 
+            (lon_mesh, lat_mesh), 
+            method='linear',
+            fill_value=nodata_value  # Usar NoData específico da variável
+        )
     
-    # Reamostrar para coordenadas desejadas
-    resampled = temp_ds.interp(x=lon_grid, y=lat_grid)
-    img_final = resampled[var_name].values
+    # Aplicar limites e NoData
+    img_final = apply_variable_limits_with_nodata(img_final, var_name)
     
-    # NÃO preencher grade - manter NaN onde não há dados suficientes
-    # img_final = fullgrid(img_final)  # Comente ou remova esta linha
-    
-    # Aplicar limites definidos em interesting_vars
-    img_final = apply_variable_limits(img_final, var_name)
-    
-    # Criar dataset final
+    # Criar dataset
     ds = xr.Dataset(
         {var_name: (['lat', 'lon'], img_final)},
         coords={'lon': lon_grid, 'lat': lat_grid}
     )
     
-    # Adicionar metadados
+    # Adicionar metadados com o NoData específico
     ds[var_name].attrs = {
         'long_name': var_clean,
         'units': unit,
-        '_FillValue': NODATA_VALUE,
+        '_FillValue': nodata_value,  # NoData específico da variável
         'valid_range': f"{min_threshold}, {max_threshold}",
-        'interpolation_method': interp_type
+        'interpolation_method': interp_type,
+        'grid_mapping': 'crs'
     }
+    
+    # Metadados de grade
+    ds.attrs.update({
+        'grid_resolution_lon': grid_resolution[0],
+        'grid_resolution_lat': grid_resolution[1],
+        'lon_min': lon_min,
+        'lon_max': lon_max,
+        'lat_min': lat_min,
+        'lat_max': lat_max
+    })
     
     return ds
 
@@ -468,9 +516,12 @@ def try_metpy_interpolation(var_name, var_clean, unit, valid_x, valid_y, valid_v
                           interp_type, hres, minimum_neighbors, search_radius, gamma, kappa_star,
                           min_threshold, max_threshold, df_time, valid_indices,
                           lon_min, lon_max, lat_min, lat_max, grid_resolution,
-                          rbf_func, rbf_smooth, central_lon, central_lat):  # Adicionar estes parâmetros
-    """Tenta interpolar usando MetPy, com fallback para scipy."""
+                          rbf_func, rbf_smooth, central_lon, central_lat):
+    """Tenta interpolar usando MetPy com valor NoData específico da variável."""
     try:
+        # Obter valor NoData específico da variável
+        nodata_value = get_variable_nodata_value(var_name)
+        
         # Usar MetPy para interpolação
         gx, gy, img = metpy_interpolate(
             valid_x, valid_y, valid_values,
@@ -484,32 +535,30 @@ def try_metpy_interpolation(var_name, var_clean, unit, valid_x, valid_y, valid_v
             rbf_smooth=rbf_smooth
         )
         
-        # Criar máscara para pontos muito distantes de observações
-        if minimum_neighbors == 0 and search_radius > 0 and interp_type != 'rbf':
-            # Criar grade de distâncias (para cada ponto da grade, calcular distância até a observação mais próxima)
-            dist_grid = np.zeros_like(img)
-            
-            # Para cada ponto na grade, calcular distância até o ponto observado mais próximo
-            for i in range(img.shape[0]):
-                for j in range(img.shape[1]):
-                    # Posição do ponto na grade
-                    px, py = gx[i,j], gy[i,j]
-                    
-                    # Calcular distâncias a todos os pontos observados
-                    dists = np.sqrt((valid_x - px)**2 + (valid_y - py)**2)
-                    
-                    # Salvar distância mínima
-                    dist_grid[i,j] = np.min(dists)
-            
-            # Marcar como NaN os pontos que estão muito longe de qualquer observação
-            img[dist_grid > search_radius * 0.75] = np.nan
+        # CORREÇÃO SIMPLES: Substituir valores problemáticos pelo NoData da variável
+        # Identificar e corrigir valores padrão problemáticos do MetPy
+        if 'TEMPERATURE' in var_name or 'DEW_POINT' in var_name:
+            # Temperaturas irreais (180K é valor padrão do MetPy)
+            problem_mask = (np.abs(img - 180.0) < 0.01)
+        elif 'WIND_SPEED' in var_name:
+            # Velocidade do vento 0 em todos os pontos (valor padrão)
+            problem_mask = (np.abs(img - 0.0) < 0.01)
+        elif 'WIND_U' in var_name or 'WIND_V' in var_name:
+            # Componentes de vento 0 (valores padrão)
+            problem_mask = (np.abs(img - 0.0) < 0.01)
+        else:
+            # Para outras variáveis, apenas NaN
+            problem_mask = np.isnan(img)
         
-        # Reamostrar para coordenadas geográficas, passando os parâmetros
+        # Aplicar valor NoData específico
+        img[problem_mask] = nodata_value
+        
+        # Reamostrar para coordenadas geográficas
         return resample_to_geographic(
             gx, gy, img, var_name, var_clean, unit, 
             min_threshold, max_threshold, interp_type,
             lon_min, lon_max, lat_min, lat_max, grid_resolution,
-            central_lon, central_lat  # Adicionar estes parâmetros
+            central_lon, central_lat
         )
         
     except Exception as e:
@@ -708,7 +757,13 @@ def interpolate_to_grid(df, unique_timestamps, interpolation_method='linear',
     
     # Funções internas para reutilização
     def interpolate_single_time(df_time, timestamp=None):
-        """Interpola dados para um único timestamp."""
+        """Interpola dados para um único timestamp com coordenadas consistentes."""
+        
+        # Usar a MESMA função para criar coordenadas
+        lon_grid, lat_grid = create_grid_coordinates(
+            lon_min, lon_max, lat_min, lat_max, grid_resolution
+        )
+        
         # Criar meshgrid
         lon_mesh, lat_mesh = np.meshgrid(lon_grid, lat_grid)
         
@@ -749,16 +804,14 @@ def interpolate_to_grid(df, unique_timestamps, interpolation_method='linear',
                 if np.sum(valid_indices) <= 3:
                     continue
                 
-                # Realizar interpolação
+                # Realizar interpolação DIRETAMENTE na grade final
                 grid_values = griddata(
                     points[valid_indices], 
                     values[valid_indices], 
                     (lon_mesh, lat_mesh), 
-                    method=interpolation_method
+                    method=interpolation_method,
+                    fill_value=np.nan
                 )
-                
-                # Preencher NaNs nas bordas
-                grid_values = fullgrid(grid_values)
                 
                 # Aplicar limites às variáveis
                 grid_values = apply_variable_limits(grid_values, var_name)
@@ -780,10 +833,9 @@ def interpolate_to_grid(df, unique_timestamps, interpolation_method='linear',
             print("  • Nenhuma variável numérica adequada para interpolação foi encontrada")
             return False, None
         
-        # Criar dataset
+        # Criar dataset com coordenadas EXATAS
         time_value = timestamp if timestamp is not None else pd.Timestamp.now()
         
-        # Criar dataset
         dataset = xr.Dataset(
             {var: (['lat', 'lon'], grid_data[var]) 
              for var in grid_data if var not in ['lon', 'lat']},
@@ -799,6 +851,16 @@ def interpolate_to_grid(df, unique_timestamps, interpolation_method='linear',
             if var_name in dataset:
                 dataset[var_name] = dataset[var_name].fillna(NODATA_VALUE)
                 dataset[var_name].attrs.update(attrs)
+    
+        # Adicionar metadados de grade
+        dataset.attrs.update({
+            'grid_resolution_lon': grid_resolution[0],
+            'grid_resolution_lat': grid_resolution[1],
+            'lon_min': lon_min,
+            'lon_max': lon_max,
+            'lat_min': lat_min,
+            'lat_max': lat_max
+        })
         
         return True, dataset
     
@@ -1173,8 +1235,8 @@ if __name__ == '__main__':
                       choices=['rbf', 'cressman', 'barnes', 'natural_neighbor', 'linear'], default='cressman',
                       help='Tipo de interpolação MetPy (padrão: rbf)')
     
-    parser.add_argument('--metpy-radius', dest='metpy_search_radius', type=float, default=300000,
-                      help='Raio de busca em metros para interpolação MetPy (padrão: 300000)')
+    parser.add_argument('--metpy-radius', dest='metpy_search_radius', type=float, default=250000,
+                      help='Raio de busca em metros para interpolação MetPy (padrão: 250000 metros)')
     
     parser.add_argument('--metpy-neighbors', dest='metpy_min_neighbors', type=int, default=0,
                       help='Número mínimo de vizinhos para interpolação MetPy (padrão: 0)')
