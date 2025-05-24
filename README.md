@@ -4,14 +4,37 @@
 
 ´metdown´ é uma biblioteca Python para download, processamento e visualização de dados meteorológicos de superfície do repositório UCAR (University Corporation for Atmospheric Research) no formato Little-R. 
 
+**Fonte dos Dados**: https://rda.ucar.edu/datasets/d461000/
+
 A biblioteca oferece múltiplas funcionalidades:
 
-- Download automático de observações meteorológicas de superfície
+- Download automático de observações meteorológicas de superfície do dataset UCAR RDA ds461.0
 - Filtragem geográfica por coordenadas
 - Interpolação espacial com múltiplos métodos (linear, cúbica, nearest, métodos especializados via MetPy)
 - Exportação para diversos formatos geoespaciais (NetCDF, GeoJSON, GeoPackage, Shapefile)
 - Manipulação de dados temporais com agregação horária
 - Controle de qualidade e limpeza de dados
+
+## Fonte de Dados
+
+Esta biblioteca utiliza o dataset **NCAR/UCAR Research Data Archive (RDA) ds461.0** 
+Os dados são obtidos diretamente do servidor da UCAR em:
+
+- **URL Base**: https://rda.ucar.edu/datasets/d461000/
+- **Formato**: Little-R (formato usado em modelos meteorológicos)
+- **Cobertura Temporal**: Dados históricos e em tempo quase real
+- **Cobertura Espacial**: Global
+- **Resolução Temporal**: Horários sinóticos (00:00, 06:00, 12:00, 18:00 UTC)
+- **Tipo de Dados**: Observações de superfície e altitude de estações meteorológicas
+
+### Citação dos Dados Fonte
+
+```
+NCAR/UCAR Research Data Archive. Integrated Global Radiosonde Archive (IGRA) and Other Upper-Air Data.
+Dataset ID: ds461.0
+URL: https://rda.ucar.edu/datasets/d461000/
+```
+
 
 ## Instalação
 
@@ -264,9 +287,23 @@ Os dados processados pela biblioteca podem ser facilmente utilizados em:
 
 ## Citação e Atribuição
 
+### Para o Software
 ```
 Neto, H. (2024). metdown: Processamento de Dados Little-R da UCAR.
 Email: helecioblneto@gmail.com
+```
+
+### Para os Dados
+```
+NCAR/UCAR Research Data Archive. Integrated Global Radiosonde Archive (IGRA) and Other Upper-Air Data.
+Dataset ID: ds461.0. Disponível em: https://rda.ucar.edu/datasets/d461000/
+```
+
+### Citação Completa Recomendada
+```
+Os dados meteorológicos utilizados neste trabalho foram obtidos do NCAR/UCAR Research Data Archive 
+(RDA) dataset ds461.0 (https://rda.ucar.edu/datasets/d461000/) e processados utilizando a biblioteca 
+metdown (Neto, H., 2024).
 ```
 
 ## Licença
