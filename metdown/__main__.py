@@ -132,15 +132,29 @@ def create_grid_coordinates(lon_min, lon_max, lat_min, lat_max, resolution):
     return lons, lats
 
 def get_utm_boundaries(lon_min, lon_max, lat_min, lat_max):
-    """Obtém limites em projeção Albers Equal Area."""
+    """Obtém limites em projeção apropriada."""
     # Calcular centro da região para otimizar a projeção
     central_lon = (lon_min + lon_max) / 2
     central_lat = (lat_min + lat_max) / 2
     
+    # Se estiver muito perto do equador, deslocar um pouco
+    if abs(central_lat) < 2:
+        central_lat = 2.0 if central_lat >= 0 else -2.0
+    
+    # Se estiver muito perto dos pólos, deslocar um pouco
+    if abs(central_lat) > 85:
+        central_lat = 85.0 if central_lat > 0 else -85.0
+    
     # Definir projeções
     from_proj = ccrs.Geodetic()
-    to_proj = ccrs.AlbersEqualArea(central_longitude=central_lon, 
-                                   central_latitude=central_lat)
+    
+    # Usar projeção apropriada baseada na latitude
+    if abs(central_lat) > 60:
+        to_proj = ccrs.StereoGraphicPolar(central_longitude=central_lon, 
+                                          central_latitude=central_lat)
+    else:
+        to_proj = ccrs.AlbersEqualArea(central_longitude=central_lon, 
+                                       central_latitude=central_lat)
     
     # Transformar pontos
     transformer = to_proj.transform_points(from_proj, 
@@ -153,7 +167,7 @@ def get_utm_boundaries(lon_min, lon_max, lat_min, lat_max):
     return min_x, max_x, min_y, max_y, central_lon, central_lat
 
 def points_to_utm(df, central_lon, central_lat):
-    """Converte pontos para projeção Albers Equal Area."""
+    """Converte pontos para projeção apropriada baseada na latitude."""
     # Criar GeoPandas DataFrame
     gdf = gpd.GeoDataFrame(
         df, 
@@ -161,8 +175,25 @@ def points_to_utm(df, central_lon, central_lat):
         crs="EPSG:4326"
     )
     
-    # Definir projeção Albers customizada
-    custom_proj = f"+proj=aea +lat_1={central_lat} +lat_2={central_lat} +lat_0={central_lat} +lon_0={central_lon}"
+    # Usar projeção apropriada baseada na latitude
+    if abs(central_lat) < 2:
+        # Para regiões próximas ao equador, usar Mercator
+        custom_proj = f"+proj=merc +lon_0={central_lon}"
+    elif abs(central_lat) > 60:
+        # Para regiões polares, usar Estereográfica Polar
+        custom_proj = f"+proj=stere +lon_0={central_lon} +lat_0={central_lat}"
+    else:
+        # Para regiões temperadas, usar Albers com parâmetros seguros
+        # Garantir que lat_1 + lat_2 != 0
+        lat_1 = max(-89, min(89, central_lat - 15))
+        lat_2 = max(-89, min(89, central_lat + 15))
+        
+        # Se ambos forem negativos ou ambos positivos, garantir que a soma não é zero
+        if (lat_1 + lat_2) == 0:
+            lat_2 = lat_1 + 30 if lat_1 < 0 else lat_1 - 30
+            lat_2 = max(-89, min(89, lat_2))
+        
+        custom_proj = f"+proj=aea +lat_1={lat_1} +lat_2={lat_2} +lat_0={central_lat} +lon_0={central_lon}"
     
     # Converter para projeção customizada
     return gdf.to_crs(custom_proj)
@@ -170,14 +201,14 @@ def points_to_utm(df, central_lon, central_lat):
 def download_file(url):
     """Baixa arquivo da URL com barra de progresso."""
     response = requests.head(url)
-    if response.status_code != 200:
-        print(f"Arquivo não existe: {url}")
-        return None
-        
+    # if response.status_code != 200 or 'int' not in response.headers.get('Content-Length', ''):
+    #     print(f"Arquivo não existe: {url}")
+    #     return None
     response = requests.get(url, stream=True)
     total_size = int(response.headers.get('content-length', 0))
+    print(f"- Iniciando download da url: {url}")
     progress_bar = tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024,
-               desc=f"- Baixando de: \t{url}\t")
+               desc="- Baixando", position=0, leave=True)
     file_in_memory = BytesIO()
     
     for chunk in response.iter_content(chunk_size=1024):
@@ -304,7 +335,7 @@ def aggregate_hourly_data(df):
 def process_data(timestamp, lon_min, lon_max, lat_min, lat_max):
     """Baixa e processa dados Little R."""
     # Construir URL
-    url_template = 'https://osdf-data.gdex.ucar.edu/ncar/gdex/d461000/little_r/{year}/SURFACE_OBS:{year}{month}{day}{hour}.txt'
+    url_template = 'https://osdf-data.gdex.ucar.edu/ncar/gdex/d461000/little_r/{year}/SURFACE_OBS:{year}{month}{day}{hour}'
     ## url_template = 'https://data.rda.ucar.edu/ds461.0/little_r/{year}/SURFACE_OBS:{year}{month}{day}{hour}'
     url = url_template.format(
         year=timestamp.strftime('%Y'),
@@ -478,19 +509,26 @@ def try_alternative_interpolation(df_time, valid_indices, valid_values,
             df_time.Latitude.values[valid_indices]
         ))
         
-        # Interpolar
-        img_final = griddata(
-            points,
-            valid_values,
-            (lon_mesh, lat_mesh),
-            method='linear'
-        )
+        # Tentar interpolação com 'nearest' primeiro (mais robusta para evitar erro do Qhull)
+        try:
+            img_final = griddata(
+                points,
+                valid_values,
+                (lon_mesh, lat_mesh),
+                method='nearest'
+            )
+        except Exception:
+            # Se nearest falhar, usar cKDTree direto
+            from scipy.spatial import cKDTree
+            tree = cKDTree(points)
+            distances, indices = tree.query(np.column_stack([lon_mesh.ravel(), lat_mesh.ravel()]))
+            img_final = valid_values[indices].reshape(lon_mesh.shape)
         
         # Preencher grade
         img_final = fullgrid(img_final)
         
         # Aplicar limites definidos em interesting_vars
-        img_final = apply_variable_limits(img_final, var_name)
+        img_final = apply_variable_limits_with_nodata(img_final, var_name)
         
         # Criar dataset
         ds = xr.Dataset(
@@ -499,12 +537,13 @@ def try_alternative_interpolation(df_time, valid_indices, valid_values,
         )
         
         # Adicionar metadados
+        nodata_value = get_variable_nodata_value(var_name)
         ds[var_name].attrs = {
             'long_name': var_clean,
             'units': unit,
-            '_FillValue': NODATA_VALUE,
+            '_FillValue': nodata_value,
             'valid_range': f"{min_threshold}, {max_threshold}",
-            'interpolation_method': 'linear (fallback)'
+            'interpolation_method': 'nearest (fallback)'
         }
         
         return ds
@@ -523,10 +562,37 @@ def try_metpy_interpolation(var_name, var_clean, unit, valid_x, valid_y, valid_v
         # Obter valor NoData específico da variável
         nodata_value = get_variable_nodata_value(var_name)
         
+        # Verificar se há variedade suficiente nos pontos para evitar erro do Qhull
+        x_range = np.ptp(valid_x)
+        y_range = np.ptp(valid_y)
+        
+        # Verificar se pontos são colineares (usando produto vetorial)
+        if len(valid_x) >= 3:
+            # Pegar 3 pontos aleatórios e verificar colinearidade
+            idx = np.random.choice(len(valid_x), min(3, len(valid_x)), replace=False)
+            p1 = np.array([valid_x[idx[0]], valid_y[idx[0]]])
+            p2 = np.array([valid_x[idx[1]], valid_y[idx[1]]])
+            if len(idx) > 2:
+                p3 = np.array([valid_x[idx[2]], valid_y[idx[2]]])
+                # Calcular área do triângulo (se área = 0, pontos são colineares)
+                area = 0.5 * abs((p2[0] - p1[0]) * (p3[1] - p1[1]) - (p3[0] - p1[0]) * (p2[1] - p1[1]))
+                if area < 1e-6:
+                    raise ValueError("Pontos colineares detectados, usando método alternativo")
+        
+        if x_range < 1000 or y_range < 1000:
+            # Pontos muito próximos espacialmente - usar método alternativo direto
+            raise ValueError("Pontos muito próximos espacialmente, usando método alternativo")
+        
+        # Se o tipo de interpolação pode causar problemas com Qhull, usar RBF ou Cressman
+        safe_interp_type = interp_type
+        if interp_type in ['natural_neighbor', 'linear']:
+            # Estes métodos usam Delaunay/Qhull que podem falhar com pontos colineares
+            safe_interp_type = 'cressman'  # Método mais robusto
+        
         # Usar MetPy para interpolação
         gx, gy, img = metpy_interpolate(
             valid_x, valid_y, valid_values,
-            interp_type=interp_type,
+            interp_type=safe_interp_type,
             hres=hres,
             minimum_neighbors=minimum_neighbors,
             search_radius=search_radius,
@@ -563,7 +629,12 @@ def try_metpy_interpolation(var_name, var_clean, unit, valid_x, valid_y, valid_v
         )
         
     except Exception as e:
-        print(f"  • Erro na interpolação MetPy para {var_clean}: {e}")
+        # Capturar erro do Qhull especificamente
+        error_msg = str(e)
+        if 'qhull' in error_msg.lower() or 'cocircular' in error_msg.lower() or 'cospherical' in error_msg.lower():
+            print(f"  • Erro de geometria (Qhull) para {var_clean}: pontos colineares/coplanos")
+        else:
+            print(f"  • Erro na interpolação MetPy para {var_clean}: {e}")
         print(f"  • Tentando método alternativo para {var_clean}")
         
         # Tentar método alternativo
@@ -579,6 +650,14 @@ def interpolate_metpy_single_time(df_time, interp_type, minimum_neighbors,
                                rbf_func, rbf_smooth):
     """Interpola dados para um único timestamp usando MetPy."""
     if not METPY_AVAILABLE:
+        return False, None
+    
+    # Verificar se é região global ou muito grande (problemas com projeção)
+    lat_range = lat_max - lat_min
+    lon_range = lon_max - lon_min
+    
+    if lat_range > 120 or lon_range > 200:
+        print(f"  • Região muito grande ({lat_range}° lat x {lon_range}° lon), usando interpolação direta")
         return False, None
     
     # Obter variáveis para interpolação
@@ -815,7 +894,7 @@ def interpolate_to_grid(df, unique_timestamps, interpolation_method='linear',
                 )
                 
                 # Aplicar limites às variáveis
-                grid_values = apply_variable_limits(grid_values, var_name)
+                grid_values = apply_variable_limits_with_nodata(grid_values, var_name)
                 
                 # Armazenar dados e metadados
                 grid_data[var_name] = grid_values
@@ -1135,13 +1214,14 @@ def process_and_save(timestamp, output_dir="./output",
                 )
             else:
                 # Criar dataset por hora usando interpolação padrão
-                success, hour_grid = interpolate_single_time(
+                hour_grid = interpolate_to_grid(
                     group, 
+                    None,  # unique_timestamps
                     interpolation_method, 
                     lon_min, lon_max, lat_min, lat_max, 
-                    grid_resolution,
-                    timestamp=time_value
+                    grid_resolution
                 )
+                success = hour_grid is not None
             
             if not success or hour_grid is None:
                 print(f"- Erro na interpolação de {time_str}")
