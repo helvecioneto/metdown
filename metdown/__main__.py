@@ -304,7 +304,8 @@ def aggregate_hourly_data(df):
 def process_data(timestamp, lon_min, lon_max, lat_min, lat_max):
     """Baixa e processa dados Little R."""
     # Construir URL
-    url_template = 'https://data.rda.ucar.edu/ds461.0/little_r/{year}/SURFACE_OBS:{year}{month}{day}{hour}'
+    url_template = 'https://osdf-data.gdex.ucar.edu/ncar/gdex/d461000/little_r/{year}/SURFACE_OBS:{year}{month}{day}{hour}'
+    ## url_template = 'https://data.rda.ucar.edu/ds461.0/little_r/{year}/SURFACE_OBS:{year}{month}{day}{hour}'
     url = url_template.format(
         year=timestamp.strftime('%Y'),
         month=timestamp.strftime('%m'),
