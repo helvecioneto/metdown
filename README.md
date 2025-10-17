@@ -48,7 +48,7 @@ URL: https://rda.ucar.edu/datasets/d461000/
 1. **Clone o repositório**
 
    ```bash
-   git clone https://github.com/helvecioneto/metdown/.git
+   git clone https://github.com/helvecioneto/metdown/
    cd metdown
    ```
 
