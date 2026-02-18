@@ -243,7 +243,7 @@ def create_datetime_columns(df):
             )
             
             # Adicionar coluna para hora truncada (arredondada para a hora exata)
-            df['datetime_hour'] = df['datetime'].dt.floor('H')
+            df['datetime_hour'] = df['datetime'].dt.floor('h')
             
             # print(f"- Coluna 'datetime' criada ({df['datetime'].nunique()} timestamps únicos)")
             # print(f"- Coluna 'datetime_hour' criada ({df['datetime_hour'].nunique()} horas únicas)")
@@ -308,7 +308,7 @@ def aggregate_hourly_data(df):
         return df, None
     
     # Truncar para hora
-    df['hour'] = df['datetime'].dt.floor('H')
+    df['hour'] = df['datetime'].dt.floor('h')
     
     # Obter variáveis numéricas para agregação
     numeric_vars = [col for col in df.columns 
@@ -1142,7 +1142,7 @@ def process_and_save(timestamp, output_dir="./output",
     
     # Garantir que a coluna datetime_hour existe para todos os formatos
     if 'datetime' in df.columns and 'datetime_hour' not in df.columns:
-        df['datetime_hour'] = df['datetime'].dt.floor('H')
+        df['datetime_hour'] = df['datetime'].dt.floor('h')
         print(f"- Coluna datetime_hour criada ({df['datetime_hour'].nunique()} horas únicas)")
     
     # Agrupar por hora - ÚNICO AGRUPAMENTO PARA TODOS OS FORMATOS
